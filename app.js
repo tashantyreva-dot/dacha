@@ -69,7 +69,7 @@ const DB = {
 let plantings = [];      // включая «удалённые» (tombstone) для синхронизации
 let year = new Date().getFullYear();
 let map, markers = {}, movingId = null;
-const live = () => plantings.filter(p => !p.deleted);
+const live = () => plantings.filter(p => !p.deleted && !p.kind);   // записи с kind (граница, строения) — не посадки
 const inYear = () => live().filter(p => cropInfo(p.crop).obj || new Date(p.plantedAt).getFullYear() === year || (p.harvests || []).some(h => new Date(h.date).getFullYear() === year));
 
 async function save(p) {
@@ -85,7 +85,15 @@ async function save(p) {
 const TILE = 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}';
 const OSM = 'https://tile.openstreetmap.org/{z}/{x}/{y}.png';
 const LAYER_NAMES = { sat: '🛰️ Спутниковый снимок', osm: '🗺️ Схема', blank: '⬜ Чистый план' };
-let layers = {}, curLayer = 'sat', plotLayer = null, drawing = null, draftLayer = null;
+const SHAPE_TYPES = {
+  'Дом': { e: '🏠', c: '#8d6e63' }, 'Теплица': { e: '🏕️', c: '#26a69a' }, 'Сарай': { e: '📦', c: '#78909c' },
+  'Баня': { e: '♨️', c: '#a1887f' }, 'Гараж': { e: '🚗', c: '#7e57c2' }, 'Другое': { e: '▫️', c: '#ef6c00' }
+};
+let layers = {}, curLayer = 'sat', plotLayer = null, shapeLayers = [], gridLayer = null, gridOn = true;
+let drawing = null, drawKind = null, draftLayer = null;
+const plotRec = () => plantings.find(p => p.kind === 'plot' && !p.deleted);
+const shapeRecs = () => plantings.filter(p => p.kind === 'shape' && !p.deleted);
+
 async function initMap() {
   const home = await DB.getMeta('home');
   const c = home || { lat: 55.75, lng: 37.6, z: 10, fresh: true };
@@ -93,9 +101,14 @@ async function initMap() {
   L.control.zoom({ position: 'topright' }).addTo(map);
   layers.sat = L.tileLayer(TILE, { maxNativeZoom: (await DB.getMeta('satZoom')) || 17, maxZoom: 21, attribution: 'Esri' });
   layers.osm = L.tileLayer(OSM, { maxNativeZoom: 19, maxZoom: 21, attribution: '© OpenStreetMap' });
+  gridOn = (await DB.getMeta('grid')) !== false;
+  // перенос границ участка из старой версии в общие данные (чтобы они попадали в облако)
+  const old = await DB.getMeta('plot');
+  if (old && !plantings.some(p => p.kind === 'plot')) { const rec = { id: 'plot', kind: 'plot', pts: old, updatedAt: Date.now() }; plantings.push(rec); await DB.put(rec); }
   setLayer((await DB.getMeta('layer')) || 'sat');
-  const plot = await DB.getMeta('plot'); if (plot) drawPlot(plot);
   map.on('click', e => onMapTap(e.latlng));
+  map.on('zoomend', () => { drawGrid(); map.getContainer().classList.toggle('zlow', map.getZoom() < 17); });
+  map.getContainer().classList.toggle('zlow', map.getZoom() < 17);
   initSearch(); initTools();
   if (c.fresh) { locate(true); hint('Найдите свой участок через поиск сверху и нажмите ⭐, чтобы карта всегда открывалась здесь.'); }
 }
@@ -104,24 +117,94 @@ function setLayer(name) {
   ['sat', 'osm'].forEach(k => { if (k === name) layers[k].addTo(map); else layers[k].remove(); });
   $('#map').style.background = name === 'blank' ? '#eef3e6' : '';
   DB.setMeta('layer', name);
+  drawGrid();
 }
-function drawPlot(pts) {
-  if (plotLayer) plotLayer.remove();
-  plotLayer = L.polygon(pts, { color: '#f9a825', weight: 3, dashArray: '8 6', fillColor: '#f9a825', fillOpacity: 0.07, interactive: false }).addTo(map);
+
+/* --- геометрия: локальная система координат в метрах, ось вдоль первой стороны участка --- */
+function frame(pts) {
+  const lat0 = pts[0][0], lng0 = pts[0][1], kx = 111320 * Math.cos(lat0 * Math.PI / 180), ky = 110540;
+  let ux = (pts[1][1] - lng0) * kx, uy = (pts[1][0] - lat0) * ky; const l = Math.hypot(ux, uy) || 1; ux /= l; uy /= l;
+  const to = p => { const e = (p[1] - lng0) * kx, n = (p[0] - lat0) * ky; return [e * ux + n * uy, -e * uy + n * ux]; };
+  const from = q => { const e = q[0] * ux - q[1] * uy, n = q[0] * uy + q[1] * ux; return [lat0 + n / ky, lng0 + e / kx]; };
+  return { to, from };
 }
-function areaSotki(pts) {
-  const lat0 = pts.reduce((s, p) => s + p[0], 0) / pts.length, kx = 111320 * Math.cos(lat0 * Math.PI / 180), ky = 110540;
-  const xy = pts.map(p => [p[1] * kx, p[0] * ky]); let s = 0;
-  xy.forEach((p, i) => { const q = xy[(i + 1) % xy.length]; s += p[0] * q[1] - q[0] * p[1]; });
-  return Math.abs(s) / 2 / 100;
+function areaM2(pts) {
+  const f = frame(pts), q = pts.map(f.to); let s = 0;
+  q.forEach((p, i) => { const r = q[(i + 1) % q.length]; s += p[0] * r[1] - r[0] * p[1]; });
+  return Math.abs(s) / 2;
+}
+function inPoly(p, q) {
+  let c = false;
+  for (let i = 0, j = q.length - 1; i < q.length; j = i++)
+    if (((q[i][1] > p[1]) !== (q[j][1] > p[1])) && (p[0] < (q[j][0] - q[i][0]) * (p[1] - q[i][1]) / (q[j][1] - q[i][1]) + q[i][0])) c = !c;
+  return c;
+}
+const sotki = pts => areaM2(pts) / 100;
+
+/* --- сетка 1×1 м внутри границ участка --- */
+function drawGrid() {
+  if (gridLayer) gridLayer.remove(); gridLayer = null;
+  const rec = plotRec(), z = map.getZoom();
+  if (!gridOn || !rec || z < 18) return;
+  const f = frame(rec.pts), q = rec.pts.map(f.to), n = q.length, step = z >= 19 ? 1 : 5;
+  const thin = [], thick = [], col = curLayer === 'sat' ? '#ffffff' : '#546e7a';
+  [0, 1].forEach(axis => {
+    const vals = q.map(p => p[axis]);
+    const lo = Math.ceil(Math.min(...vals) / step) * step, hi = Math.floor(Math.max(...vals) / step) * step;
+    for (let v = lo; v <= hi; v += step) {
+      const xs = [];
+      for (let i = 0; i < n; i++) {
+        const p = q[i], r = q[(i + 1) % n], pv = p[axis], rv = r[axis];
+        if ((pv <= v && v < rv) || (rv <= v && v < pv)) xs.push(p[1 - axis] + (v - pv) / (rv - pv) * (r[1 - axis] - p[1 - axis]));
+      }
+      xs.sort((x, y) => x - y);
+      for (let i = 0; i + 1 < xs.length; i += 2) {
+        const seg = axis ? [[xs[i], v], [xs[i + 1], v]] : [[v, xs[i]], [v, xs[i + 1]]];
+        (v % 5 === 0 ? thick : thin).push(seg.map(f.from));
+      }
+    }
+  });
+  gridLayer = L.layerGroup([
+    L.polyline(thin, { color: col, weight: 1, opacity: 0.45, interactive: false }),
+    L.polyline(thick, { color: col, weight: 1.6, opacity: 0.8, interactive: false })
+  ]).addTo(map);
+}
+// привязка новой метки к центру клетки сетки (когда сетка видна и точка внутри участка)
+function snap(ll) {
+  const rec = plotRec();
+  if (!gridOn || !rec || map.getZoom() < 19) return ll;
+  const f = frame(rec.pts), q = rec.pts.map(f.to), p = f.to([ll.lat, ll.lng]);
+  if (!inPoly(p, q)) return ll;
+  const [lat, lng] = f.from([Math.floor(p[0]) + 0.5, Math.floor(p[1]) + 0.5]);
+  return { lat, lng };
+}
+
+/* --- границы участка и строений --- */
+function renderShapes() {
+  if (!map) return;
+  if (plotLayer) plotLayer.remove(); plotLayer = null;
+  shapeLayers.forEach(l => l.remove()); shapeLayers = [];
+  const pr = plotRec();
+  if (pr) {
+    plotLayer = L.polygon(pr.pts, { color: '#f9a825', weight: 3, dashArray: '8 6', fillColor: '#f9a825', fillOpacity: 0.07, interactive: false }).addTo(map);
+    plotLayer.bindTooltip('Участок ≈ ' + sotki(pr.pts).toFixed(1) + ' сот.', { permanent: true, direction: 'center', className: 'shape-label' });
+  }
+  shapeRecs().forEach(s => {
+    const t = SHAPE_TYPES[s.type] || SHAPE_TYPES['Другое'];
+    const l = L.polygon(s.pts, { color: t.c, weight: 2, fillColor: t.c, fillOpacity: 0.35, interactive: false }).addTo(map);
+    l.bindTooltip(t.e + ' ' + (s.name || s.type) + ' · ' + Math.round(areaM2(s.pts)) + ' м²', { permanent: true, direction: 'center', className: 'shape-label' });
+    shapeLayers.push(l);
+  });
+  drawGrid();
 }
 function redrawDraft() {
   if (draftLayer) draftLayer.remove();
   draftLayer = L.layerGroup([L.polyline(drawing, { color: '#f9a825', weight: 3, interactive: false }), ...drawing.map(p => L.circleMarker(p, { radius: 6, color: '#fff', weight: 2, fillColor: '#f9a825', fillOpacity: 1, interactive: false }))]).addTo(map);
-  hint(drawing.length < 3 ? 'Нажимайте на углы участка по кругу (минимум 3 точки). Сейчас точек: ' + drawing.length : 'Точек: ' + drawing.length + '. Нажмите «Готово», когда обошли весь участок.');
+  const what = drawKind === 'plot' ? 'участка' : 'строения';
+  hint(drawing.length < 3 ? 'Нажимайте на углы ' + what + ' по кругу (минимум 3 точки). Сейчас точек: ' + drawing.length : 'Точек: ' + drawing.length + '. Нажмите «Готово», когда обошли весь контур.');
 }
-function startDraw() {
-  drawing = []; redrawDraft(); $('#drawbar').style.display = 'flex'; $('#btn-gps').style.display = 'none';
+function startDraw(kind) {
+  drawKind = kind; drawing = []; redrawDraft(); $('#drawbar').style.display = 'flex'; $('#btn-gps').style.display = 'none';
 }
 function stopDraw() {
   drawing = null; if (draftLayer) draftLayer.remove(); draftLayer = null;
@@ -129,20 +212,38 @@ function stopDraw() {
 }
 async function finishDraw() {
   if (drawing.length < 3) return alert('Нужно минимум 3 точки');
-  const pts = drawing; stopDraw();
-  await DB.setMeta('plot', pts); drawPlot(pts);
-  map.fitBounds(plotLayer.getBounds().pad(0.1));
-  await saveHome();
-  hint('Границы сохранены. Площадь примерно ' + areaSotki(pts).toFixed(1) + ' сот. Теперь можно приближать и ставить метки.'); setTimeout(() => hint(''), 6000);
+  const pts = drawing, kind = drawKind; stopDraw();
+  if (kind === 'plot') {
+    await save({ id: 'plot', kind: 'plot', pts });
+    map.fitBounds(plotLayer.getBounds().pad(0.1));
+    await saveHome(true);
+    hint('✅ Границы сохранены. Площадь участка ≈ ' + sotki(pts).toFixed(1) + ' сот. (' + Math.round(areaM2(pts)) + ' м²). Сетка 1×1 м появится при приближении.');
+    setTimeout(() => hint(''), 9000);
+  } else askShape(pts);
+}
+function askShape(pts) {
+  openSheet(`<h3 style="margin-top:0">Что это за строение?</h3>
+    <label>Тип</label><select id="sh-type">${Object.keys(SHAPE_TYPES).map(k => `<option>${k}</option>`).join('')}</select>
+    <label>Название (необязательно)</label><input id="sh-name" placeholder="например, «Большая теплица»">
+    <p class="muted">Площадь: ${Math.round(areaM2(pts))} м²</p>
+    <button class="b" id="sh-ok">Сохранить</button><button class="b sec" id="sh-no">Отмена</button>`);
+  $('#sh-no').onclick = closeSheet;
+  $('#sh-ok').onclick = async () => { await save({ id: uid(), kind: 'shape', type: $('#sh-type').value, name: $('#sh-name').value.trim(), pts }); closeSheet(); };
 }
 function initTools() {
-  $('#v-map').insertAdjacentHTML('beforeend', `<div class="tools"><button id="t-layer" title="Слой карты">🛰️</button><button id="t-plot" title="Обвести границы участка">▢</button><button id="t-fit" title="К моему участку">🎯</button></div>
+  $('#v-map').insertAdjacentHTML('beforeend', `<div class="tools"><button id="t-layer" title="Слой карты">🛰️</button><button id="t-plot" title="Обвести границы участка">▢</button><button id="t-bld" title="Обвести строение">🏠</button><button id="t-grid" title="Сетка 1×1 м">🔳</button><button id="t-fit" title="К моему участку">🎯</button></div>
     <div id="drawbar" class="drawbar" style="display:none"><button class="b sec" id="d-undo">↩ Убрать точку</button><button class="b" id="d-ok">✓ Готово</button><button class="b red" id="d-no">✕</button></div>`);
   L.DomEvent.disableClickPropagation($('.tools')); L.DomEvent.disableClickPropagation($('#drawbar'));
   const names = Object.keys(LAYER_NAMES);
   $('#t-layer').onclick = () => { const n = names[(names.indexOf(curLayer) + 1) % names.length]; setLayer(n); hint(LAYER_NAMES[n]); setTimeout(() => hint(''), 1800); };
-  $('#t-plot').onclick = async () => { if (await DB.getMeta('plot') && !confirm('Обвести границы участка заново? Старые границы будут заменены.')) return; startDraw(); };
-  $('#t-fit').onclick = async () => { if (plotLayer) map.fitBounds(plotLayer.getBounds().pad(0.1)); else goHome(); };
+  $('#t-plot').onclick = () => { if (plotRec() && !confirm('Обвести границы участка заново? Старые границы будут заменены.')) return; startDraw('plot'); };
+  $('#t-bld').onclick = () => startDraw('building');
+  $('#t-grid').onclick = () => {
+    if (!plotRec()) { hint('Сначала обведите границы участка (кнопка ▢)'); setTimeout(() => hint(''), 3000); return; }
+    gridOn = !gridOn; DB.setMeta('grid', gridOn); drawGrid();
+    hint(gridOn ? 'Сетка 1×1 м включена (видна при приближении, метки встают в центр клетки)' : 'Сетка выключена'); setTimeout(() => hint(''), 3000);
+  };
+  $('#t-fit').onclick = () => { if (plotLayer) map.fitBounds(plotLayer.getBounds().pad(0.1)); else goHome(); };
   $('#d-undo').onclick = () => { drawing.pop(); redrawDraft(); };
   $('#d-ok').onclick = finishDraw;
   $('#d-no').onclick = stopDraw;
@@ -151,9 +252,10 @@ async function goHome() {
   const h = await DB.getMeta('home');
   if (h) map.setView([h.lat, h.lng], h.z); else locate(true);
 }
-async function saveHome() {
+async function saveHome(silent) {
   const c = map.getCenter();
   await DB.setMeta('home', { lat: c.lat, lng: c.lng, z: map.getZoom() });
+  if (silent === true) return;
   hint('⭐ Запомнено: теперь карта всегда открывается на этом месте.'); setTimeout(() => hint(''), 3500);
 }
 /* ---------- Поиск места ---------- */
@@ -179,7 +281,7 @@ function initSearch() {
   };
   $('#q-go').onclick = go;
   $('#q-place').onkeydown = e => { if (e.key === 'Enter') go(); };
-  $('#q-home').onclick = saveHome;
+  $('#q-home').onclick = () => saveHome();
 }
 function locate(center) {
   return new Promise(res => {
@@ -198,7 +300,7 @@ function onMapTap(ll) {
     if (p) { p.lat = ll.lat; p.lng = ll.lng; save(p); }
     return;
   }
-  openForm(null, ll);
+  openForm(null, snap(ll));
 }
 function hint(t) { const h = $('#hint'); h.textContent = t; h.style.display = t ? 'block' : 'none'; }
 function renderMarkers() {
@@ -363,6 +465,10 @@ async function renderSettings() {
     <h3>Файл-копия</h3>
     <button class="b sec" id="s-exp">Сохранить в файл</button>
     <label style="display:inline-block" class="b sec">Загрузить из файла<input id="s-imp" type="file" accept=".json" hidden></label>
+    <h3>Участок и строения</h3>
+    <div class="muted">${plotRec() ? 'Участок: ≈ ' + sotki(plotRec().pts).toFixed(1) + ' сот. (' + Math.round(areaM2(plotRec().pts)) + ' м²)' : 'Границы участка ещё не обведены (кнопка ▢ на карте).'}</div>
+    ${shapeRecs().map(s => `<div class="card"><div class="t">${(SHAPE_TYPES[s.type] || SHAPE_TYPES['Другое']).e} ${esc(s.name || s.type)}</div><div class="s">${esc(s.type)} · ${Math.round(areaM2(s.pts))} м²</div>
+      <button class="b sec" data-sh="show:${s.id}">На карте</button><button class="b sec" data-sh="ren:${s.id}">Переименовать</button><button class="b red" data-sh="del:${s.id}">Удалить</button></div>`).join('')}
     <h3>Слой карты</h3>
     <label>Максимальная детализация снимка (если при приближении видите «Map data not yet available» — уменьшите)</label>
     <select id="s-z"><option>15</option><option>16</option><option>17</option><option>18</option><option>19</option></select>
@@ -370,6 +476,12 @@ async function renderSettings() {
     <button class="b sec" id="s-home">⭐ Запомнить текущий вид карты как мой участок</button>
     <button class="b sec" id="s-loc">📍 Перейти к моему положению</button>`;
   $('#s-dl').onclick = downloadTiles;
+  $('#v-set').querySelectorAll('[data-sh]').forEach(b => b.onclick = async () => {
+    const [act, id] = b.dataset.sh.split(':'), s = plantings.find(x => x.id === id); if (!s) return;
+    if (act === 'show') { switchView('map'); map.fitBounds(L.polygon(s.pts).getBounds().pad(0.4)); }
+    else if (act === 'ren') { const nm = prompt('Название строения', s.name || ''); if (nm !== null) { s.name = nm.trim(); await save(s); renderSettings(); } }
+    else if (act === 'del' && confirm('Удалить «' + (s.name || s.type) + '»?')) { s.deleted = true; await save(s); renderSettings(); }
+  });
   $('#s-z').value = layers.sat.options.maxNativeZoom;
   $('#s-z').onchange = e => { layers.sat.options.maxNativeZoom = +e.target.value; layers.sat.redraw(); DB.setMeta('satZoom', +e.target.value); };
   $('#s-loc').onclick = () => { switchView('map'); locate(true); };
@@ -470,7 +582,7 @@ function renderYears() {
 $('#year').onchange = e => { year = +e.target.value; renderAll(); };
 function renderNet() { $('#net').textContent = navigator.onLine ? '● онлайн' : '○ офлайн'; }
 addEventListener('online', () => { renderNet(); Sync.run(false); }); addEventListener('offline', renderNet);
-function renderAll() { renderYears(); renderMarkers(); renderList(); renderTodo(); }
+function renderAll() { renderYears(); if (map) { renderShapes(); renderMarkers(); } renderList(); renderTodo(); }
 
 (async function start() {
   $('#crops').innerHTML = Object.keys(CROPS).map(c => `<option value="${esc(c)}">`).join('');
