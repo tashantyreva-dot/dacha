@@ -47,3 +47,5 @@ h3{margin:14px 0 6px}
 .tools button{width:40px;height:40px;border:0;border-radius:8px;background:#fff;font-size:20px;box-shadow:0 1px 4px #0005}
 .drawbar{position:absolute;left:8px;right:8px;bottom:16px;z-index:600;display:flex;gap:8px;justify-content:center}
 .drawbar .b{margin:0}
+.leaflet-tooltip.shape-label{background:#fffd;border:0;box-shadow:none;padding:1px 5px;font-size:11px;color:#222;white-space:nowrap}
+.zlow .shape-label{display:none}
