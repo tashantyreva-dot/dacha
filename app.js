@@ -79,13 +79,48 @@ async function save(p) {
 /* ---------- Карта ---------- */
 const TILE = 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}';
 async function initMap() {
-  const c = (await DB.getMeta('center')) || { lat: 55.75, lng: 37.6, z: 10, fresh: true };
+  const home = await DB.getMeta('home');
+  const c = home || { lat: 55.75, lng: 37.6, z: 10, fresh: true };
   map = L.map('map', { zoomControl: false, maxZoom: 21 }).setView([c.lat, c.lng], c.z);
   L.control.zoom({ position: 'topright' }).addTo(map);
   L.tileLayer(TILE, { maxNativeZoom: 19, maxZoom: 21, attribution: 'Esri' }).addTo(map);
-  map.on('moveend', () => { const m = map.getCenter(); DB.setMeta('center', { lat: m.lat, lng: m.lng, z: map.getZoom() }); });
   map.on('click', e => onMapTap(e.latlng));
-  if (c.fresh) locate(true);
+  initSearch();
+  if (c.fresh) { locate(true); hint('Найдите свой участок через поиск сверху и нажмите ⭐, чтобы карта всегда открывалась здесь.'); }
+}
+async function goHome() {
+  const h = await DB.getMeta('home');
+  if (h) map.setView([h.lat, h.lng], h.z); else locate(true);
+}
+async function saveHome() {
+  const c = map.getCenter();
+  await DB.setMeta('home', { lat: c.lat, lng: c.lng, z: map.getZoom() });
+  hint('⭐ Запомнено: теперь карта всегда открывается на этом месте.'); setTimeout(() => hint(''), 3500);
+}
+/* ---------- Поиск места ---------- */
+function initSearch() {
+  $('#v-map').insertAdjacentHTML('beforeend', `<div id="search" class="search"><div class="srow"><input id="q-place" placeholder="Деревня, адрес или координаты"><button id="q-go" title="Найти">🔍</button><button id="q-home" title="Запомнить как мой участок">⭐</button></div><div id="q-res"></div></div>`);
+  const box = $('#search'); L.DomEvent.disableClickPropagation(box); L.DomEvent.disableScrollPropagation(box);
+  const res = $('#q-res');
+  const jump = (lat, lng, z) => { map.setView([lat, lng], z); res.innerHTML = ''; };
+  const go = async () => {
+    const q = $('#q-place').value.trim(); if (!q) return;
+    if (/^[-\d.,;\s]+$/.test(q)) {
+      const n = (q.match(/-?\d+(?:[.,]\d+)?/g) || []).map(s => +s.replace(',', '.'));
+      if (n.length === 2 && Math.abs(n[0]) <= 90 && Math.abs(n[1]) <= 180) return jump(n[0], n[1], 18);
+    }
+    if (!navigator.onLine) { res.innerHTML = '<div class="r">Для поиска нужен интернет</div>'; return; }
+    res.innerHTML = '<div class="r">Ищу…</div>';
+    try {
+      const r = await fetch('https://nominatim.openstreetmap.org/search?format=jsonv2&limit=6&accept-language=ru&q=' + encodeURIComponent(q));
+      const arr = await r.json();
+      res.innerHTML = arr.length ? arr.map((x, i) => `<div class="r" data-i="${i}">${esc(x.display_name)}</div>`).join('') : '<div class="r">Ничего не найдено. Попробуйте название ближайшей деревни или координаты.</div>';
+      res.querySelectorAll('[data-i]').forEach(d => d.onclick = () => { const x = arr[+d.dataset.i]; jump(+x.lat, +x.lon, 17); });
+    } catch (_) { res.innerHTML = '<div class="r">Не удалось выполнить поиск. Проверьте интернет.</div>'; }
+  };
+  $('#q-go').onclick = go;
+  $('#q-place').onkeydown = e => { if (e.key === 'Enter') go(); };
+  $('#q-home').onclick = saveHome;
 }
 function locate(center) {
   return new Promise(res => {
@@ -269,9 +304,11 @@ async function renderSettings() {
     <button class="b sec" id="s-exp">Сохранить в файл</button>
     <label style="display:inline-block" class="b sec">Загрузить из файла<input id="s-imp" type="file" accept=".json" hidden></label>
     <h3>Участок</h3>
+    <button class="b sec" id="s-home">⭐ Запомнить текущий вид карты как мой участок</button>
     <button class="b sec" id="s-loc">📍 Перейти к моему положению</button>`;
   $('#s-dl').onclick = downloadTiles;
   $('#s-loc').onclick = () => { switchView('map'); locate(true); };
+  $('#s-home').onclick = () => { switchView('map'); setTimeout(() => hint('Подвиньте карту на свой участок и нажмите ⭐ вверху'), 100); };
   $('#s-save').onclick = async () => {
     await DB.setMeta('sync', { url: $('#s-url').value.trim(), key: $('#s-key').value.trim(), mail: $('#s-mail').value.trim(), pass: $('#s-pass').value });
     Sync.client = null; await Sync.run(true);
