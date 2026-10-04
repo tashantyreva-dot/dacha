@@ -1,0 +1,38 @@
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;font-family:system-ui,-apple-system,Roboto,sans-serif;background:#f4f6f1;color:#222}
+body{display:flex;flex-direction:column}
+header{background:#2e7d32;color:#fff;padding:8px 12px;display:flex;align-items:center;gap:10px;padding-top:max(8px,env(safe-area-inset-top))}
+header #title{font-weight:600;font-size:18px;flex:1}
+header select{font-size:15px;padding:4px 6px;border-radius:6px;border:0}
+.net{font-size:12px;opacity:.9}
+main{flex:1;position:relative;min-height:0}
+.view{display:none;position:absolute;inset:0;overflow:auto;padding:12px}
+.view.active{display:block}
+#v-map{padding:0}
+#map{position:absolute;inset:0}
+.fab{position:absolute;left:50%;transform:translateX(-50%);bottom:16px;z-index:500;background:#2e7d32;color:#fff;border:0;border-radius:28px;padding:14px 22px;font-size:16px;box-shadow:0 2px 8px #0006}
+.hint{position:absolute;top:8px;left:8px;right:8px;z-index:500;background:#fffe;border-radius:8px;padding:8px 10px;font-size:14px;display:none}
+nav{display:flex;background:#fff;border-top:1px solid #ddd;padding-bottom:env(safe-area-inset-bottom)}
+nav button{flex:1;border:0;background:none;padding:6px 0;font-size:22px;display:flex;flex-direction:column;align-items:center;color:#666}
+nav button span{font-size:11px}
+nav button.on{color:#2e7d32;font-weight:600}
+.sheet{position:fixed;inset:0;background:#0008;z-index:1000;display:flex;align-items:flex-end}
+.sheet.hidden{display:none}
+.sheet-body{background:#fff;width:100%;max-height:92%;overflow:auto;border-radius:16px 16px 0 0;padding:16px}
+label{display:block;font-size:13px;color:#555;margin:10px 0 3px}
+input,select,textarea{width:100%;font-size:16px;padding:9px;border:1px solid #ccc;border-radius:8px;background:#fff}
+textarea{min-height:70px}
+.row{display:flex;gap:8px}.row>*{flex:1}
+button.b{background:#2e7d32;color:#fff;border:0;border-radius:8px;padding:11px 14px;font-size:15px;margin:6px 6px 0 0}
+button.b.sec{background:#e8ece4;color:#222}
+button.b.red{background:#c62828}
+.card{background:#fff;border-radius:10px;padding:10px 12px;margin-bottom:8px;box-shadow:0 1px 3px #0002}
+.card .t{font-weight:600}.card .s{font-size:13px;color:#666}
+.photos{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px}
+.photos img{width:80px;height:80px;object-fit:cover;border-radius:8px}
+.tips{background:#f1f8e9;border-radius:8px;padding:8px 10px;font-size:14px;margin-top:8px}
+.pin{font-size:26px;line-height:1;text-shadow:0 0 3px #fff,0 0 3px #fff,0 0 6px #000}
+h3{margin:14px 0 6px}
+.muted{color:#777;font-size:13px}
+.h{display:flex;justify-content:space-between;align-items:center;margin:4px 0}
+.h button{border:0;background:none;color:#c62828;font-size:18px}
