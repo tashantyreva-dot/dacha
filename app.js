@@ -23,6 +23,11 @@ const CROPS = {
   'Яблоня': { e: '🍎', harvest: [1095, 2000], tips: 'Обрезка зимой/ранней весной. Побелка штамба осенью. Полив первые 3 года.', tasks: [[30, 'Полив, мульча'], [365, 'Весенняя обрезка и подкормка']] },
   'Смородина': { e: '🫐', harvest: [365, 730], tips: 'Обновляющая обрезка осенью. Мульча.', tasks: [[30, 'Подкормка']] },
   'Цветы': { e: '🌷', harvest: [30, 90], tips: 'Поливать по погоде, подкармливать при бутонизации.', tasks: [[14, 'Подкормка']] },
+  'Теплица': { e: '🏕️', obj: true, harvest: null, tips: '', tasks: [] },
+  'Дом': { e: '🏠', obj: true, harvest: null, tips: '', tasks: [] },
+  'Колодец / вода': { e: '💧', obj: true, harvest: null, tips: '', tasks: [] },
+  'Компост': { e: '♻️', obj: true, harvest: null, tips: '', tasks: [] },
+  'Грядка': { e: '🟫', obj: true, harvest: null, tips: '', tasks: [] },
   'Другое': { e: '🌱', harvest: [60, 120], tips: '', tasks: [] }
 };
 const cropInfo = n => CROPS[n] || CROPS['Другое'];
@@ -65,7 +70,7 @@ let plantings = [];      // включая «удалённые» (tombstone) д
 let year = new Date().getFullYear();
 let map, markers = {}, movingId = null;
 const live = () => plantings.filter(p => !p.deleted);
-const inYear = () => live().filter(p => new Date(p.plantedAt).getFullYear() === year || (p.harvests || []).some(h => new Date(h.date).getFullYear() === year));
+const inYear = () => live().filter(p => cropInfo(p.crop).obj || new Date(p.plantedAt).getFullYear() === year || (p.harvests || []).some(h => new Date(h.date).getFullYear() === year));
 
 async function save(p) {
   p.updatedAt = Date.now();
@@ -78,15 +83,69 @@ async function save(p) {
 
 /* ---------- Карта ---------- */
 const TILE = 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}';
+const OSM = 'https://tile.openstreetmap.org/{z}/{x}/{y}.png';
+const LAYER_NAMES = { sat: '🛰️ Спутниковый снимок', osm: '🗺️ Схема', blank: '⬜ Чистый план' };
+let layers = {}, curLayer = 'sat', plotLayer = null, drawing = null, draftLayer = null;
 async function initMap() {
   const home = await DB.getMeta('home');
   const c = home || { lat: 55.75, lng: 37.6, z: 10, fresh: true };
   map = L.map('map', { zoomControl: false, maxZoom: 21 }).setView([c.lat, c.lng], c.z);
   L.control.zoom({ position: 'topright' }).addTo(map);
-  L.tileLayer(TILE, { maxNativeZoom: 19, maxZoom: 21, attribution: 'Esri' }).addTo(map);
+  layers.sat = L.tileLayer(TILE, { maxNativeZoom: (await DB.getMeta('satZoom')) || 17, maxZoom: 21, attribution: 'Esri' });
+  layers.osm = L.tileLayer(OSM, { maxNativeZoom: 19, maxZoom: 21, attribution: '© OpenStreetMap' });
+  setLayer((await DB.getMeta('layer')) || 'sat');
+  const plot = await DB.getMeta('plot'); if (plot) drawPlot(plot);
   map.on('click', e => onMapTap(e.latlng));
-  initSearch();
+  initSearch(); initTools();
   if (c.fresh) { locate(true); hint('Найдите свой участок через поиск сверху и нажмите ⭐, чтобы карта всегда открывалась здесь.'); }
+}
+function setLayer(name) {
+  curLayer = name;
+  ['sat', 'osm'].forEach(k => { if (k === name) layers[k].addTo(map); else layers[k].remove(); });
+  $('#map').style.background = name === 'blank' ? '#eef3e6' : '';
+  DB.setMeta('layer', name);
+}
+function drawPlot(pts) {
+  if (plotLayer) plotLayer.remove();
+  plotLayer = L.polygon(pts, { color: '#f9a825', weight: 3, dashArray: '8 6', fillColor: '#f9a825', fillOpacity: 0.07, interactive: false }).addTo(map);
+}
+function areaSotki(pts) {
+  const lat0 = pts.reduce((s, p) => s + p[0], 0) / pts.length, kx = 111320 * Math.cos(lat0 * Math.PI / 180), ky = 110540;
+  const xy = pts.map(p => [p[1] * kx, p[0] * ky]); let s = 0;
+  xy.forEach((p, i) => { const q = xy[(i + 1) % xy.length]; s += p[0] * q[1] - q[0] * p[1]; });
+  return Math.abs(s) / 2 / 100;
+}
+function redrawDraft() {
+  if (draftLayer) draftLayer.remove();
+  draftLayer = L.layerGroup([L.polyline(drawing, { color: '#f9a825', weight: 3, interactive: false }), ...drawing.map(p => L.circleMarker(p, { radius: 6, color: '#fff', weight: 2, fillColor: '#f9a825', fillOpacity: 1, interactive: false }))]).addTo(map);
+  hint(drawing.length < 3 ? 'Нажимайте на углы участка по кругу (минимум 3 точки). Сейчас точек: ' + drawing.length : 'Точек: ' + drawing.length + '. Нажмите «Готово», когда обошли весь участок.');
+}
+function startDraw() {
+  drawing = []; redrawDraft(); $('#drawbar').style.display = 'flex'; $('#btn-gps').style.display = 'none';
+}
+function stopDraw() {
+  drawing = null; if (draftLayer) draftLayer.remove(); draftLayer = null;
+  $('#drawbar').style.display = 'none'; $('#btn-gps').style.display = ''; hint('');
+}
+async function finishDraw() {
+  if (drawing.length < 3) return alert('Нужно минимум 3 точки');
+  const pts = drawing; stopDraw();
+  await DB.setMeta('plot', pts); drawPlot(pts);
+  map.fitBounds(plotLayer.getBounds().pad(0.1));
+  await saveHome();
+  hint('Границы сохранены. Площадь примерно ' + areaSotki(pts).toFixed(1) + ' сот. Теперь можно приближать и ставить метки.'); setTimeout(() => hint(''), 6000);
+}
+function initTools() {
+  $('#v-map').insertAdjacentHTML('beforeend', `<div class="tools"><button id="t-layer" title="Слой карты">🛰️</button><button id="t-plot" title="Обвести границы участка">▢</button><button id="t-fit" title="К моему участку">🎯</button></div>
+    <div id="drawbar" class="drawbar" style="display:none"><button class="b sec" id="d-undo">↩ Убрать точку</button><button class="b" id="d-ok">✓ Готово</button><button class="b red" id="d-no">✕</button></div>`);
+  L.DomEvent.disableClickPropagation($('.tools')); L.DomEvent.disableClickPropagation($('#drawbar'));
+  const names = Object.keys(LAYER_NAMES);
+  $('#t-layer').onclick = () => { const n = names[(names.indexOf(curLayer) + 1) % names.length]; setLayer(n); hint(LAYER_NAMES[n]); setTimeout(() => hint(''), 1800); };
+  $('#t-plot').onclick = async () => { if (await DB.getMeta('plot') && !confirm('Обвести границы участка заново? Старые границы будут заменены.')) return; startDraw(); };
+  $('#t-fit').onclick = async () => { if (plotLayer) map.fitBounds(plotLayer.getBounds().pad(0.1)); else goHome(); };
+  $('#d-undo').onclick = () => { drawing.pop(); redrawDraft(); };
+  $('#d-ok').onclick = finishDraw;
+  $('#d-no').onclick = stopDraw;
 }
 async function goHome() {
   const h = await DB.getMeta('home');
@@ -133,6 +192,7 @@ function locate(center) {
   });
 }
 function onMapTap(ll) {
+  if (drawing) { drawing.push([ll.lat, ll.lng]); redrawDraft(); return; }
   if (movingId) {
     const p = plantings.find(x => x.id === movingId); movingId = null; hint('');
     if (p) { p.lat = ll.lat; p.lng = ll.lng; save(p); }
@@ -303,10 +363,15 @@ async function renderSettings() {
     <h3>Файл-копия</h3>
     <button class="b sec" id="s-exp">Сохранить в файл</button>
     <label style="display:inline-block" class="b sec">Загрузить из файла<input id="s-imp" type="file" accept=".json" hidden></label>
+    <h3>Слой карты</h3>
+    <label>Максимальная детализация снимка (если при приближении видите «Map data not yet available» — уменьшите)</label>
+    <select id="s-z"><option>15</option><option>16</option><option>17</option><option>18</option><option>19</option></select>
     <h3>Участок</h3>
     <button class="b sec" id="s-home">⭐ Запомнить текущий вид карты как мой участок</button>
     <button class="b sec" id="s-loc">📍 Перейти к моему положению</button>`;
   $('#s-dl').onclick = downloadTiles;
+  $('#s-z').value = layers.sat.options.maxNativeZoom;
+  $('#s-z').onchange = e => { layers.sat.options.maxNativeZoom = +e.target.value; layers.sat.redraw(); DB.setMeta('satZoom', +e.target.value); };
   $('#s-loc').onclick = () => { switchView('map'); locate(true); };
   $('#s-home').onclick = () => { switchView('map'); setTimeout(() => hint('Подвиньте карту на свой участок и нажмите ⭐ вверху'), 100); };
   $('#s-save').onclick = async () => {
@@ -334,11 +399,14 @@ const lat2y = (lat, z) => Math.floor((1 - Math.log(Math.tan(lat * Math.PI / 180)
 async function downloadTiles() {
   const st = $('#dl-st');
   if (!navigator.onLine) return st.textContent = 'Нет интернета: скачайте карту там, где он есть.';
+  const src = { sat: { url: TILE, max: layers.sat.options.maxNativeZoom }, osm: { url: OSM, max: 19 } }[curLayer];
+  if (!src) return st.textContent = 'Для «чистого плана» карту скачивать не нужно: он работает без интернета.';
   const b = map.getBounds().pad(0.15), urls = [];
-  for (let z = 15; z <= 19; z++) {
+  for (let z = 15; z <= src.max; z++) {
     const x0 = lon2x(b.getWest(), z), x1 = lon2x(b.getEast(), z), y0 = lat2y(b.getNorth(), z), y1 = lat2y(b.getSouth(), z);
-    for (let x = x0; x <= x1; x++) for (let y = y0; y <= y1; y++) urls.push(TILE.replace('{z}', z).replace('{x}', x).replace('{y}', y));
+    for (let x = x0; x <= x1; x++) for (let y = y0; y <= y1; y++) urls.push(src.url.replace('{z}', z).replace('{x}', x).replace('{y}', y));
   }
+  if (curLayer === 'osm' && urls.length > 400) return st.textContent = 'Для схемы OpenStreetMap можно сохранять только небольшую область (до 400 фрагментов, сейчас ' + urls.length + '). Приблизьте карту к участку.';
   if (urls.length > 2500) return st.textContent = 'Слишком большая область (' + urls.length + ' фрагментов). Приблизьте карту к участку.';
   if (!confirm(`Скачать ${urls.length} фрагментов карты (около ${Math.round(urls.length * 0.025)} МБ)?`)) return;
   const cache = await caches.open('tiles'); let n = 0, bad = 0;
