@@ -1,4 +1,4 @@
-const VER = 'dacha-v1';
+const VER = 'dacha-v2';
 const SHELL = ['./', './index.html', './app.js', './style.css', './manifest.json', './icon.svg'];
 const CDN = ['https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.js', 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.css', 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.2/dist/umd/supabase.js'];
 
