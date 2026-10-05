@@ -90,7 +90,7 @@ const SHAPE_TYPES = {
   'Баня': { e: '♨️', c: '#a1887f' }, 'Гараж': { e: '🚗', c: '#7e57c2' }, 'Другое': { e: '▫️', c: '#ef6c00' }
 };
 let layers = {}, curLayer = 'sat', plotLayer = null, shapeLayers = [], gridLayer = null, gridOn = true;
-let drawing = null, drawKind = null, draftLayer = null;
+let drawing = null, drawKind = null, draftLayer = null, editing = null, editLayer = null;
 const plotRec = () => plantings.find(p => p.kind === 'plot' && !p.deleted);
 const shapeRecs = () => plantings.filter(p => p.kind === 'shape' && !p.deleted);
 const zoneRecs = () => plantings.filter(p => p.kind === 'zone' && !p.deleted);
@@ -189,18 +189,18 @@ function renderShapes() {
   if (!map) return;
   if (plotLayer) plotLayer.remove(); plotLayer = null;
   shapeLayers.forEach(l => l.remove()); shapeLayers = [];
-  const pr = plotRec();
-  if (pr) {
+  const pr = plotRec(), ed = id => editing && editing.rec.id === id;
+  if (pr && !ed(pr.id)) {
     plotLayer = L.polygon(pr.pts, { color: '#f9a825', weight: 3, dashArray: '8 6', fillColor: '#f9a825', fillOpacity: 0.07, interactive: false }).addTo(map);
     plotLayer.bindTooltip('Участок ≈ ' + sotki(pr.pts).toFixed(1) + ' сот.', { permanent: true, direction: 'center', className: 'shape-label' });
   }
-  zoneRecs().forEach(z => {
+  zoneRecs().filter(z => !ed(z.id)).forEach(z => {
     const l = L.polygon(z.pts, { color: z.color, weight: 2, dashArray: '2 5', fillColor: z.color, fillOpacity: 0.16, interactive: false }).addTo(map);
     const n = inZone(z).length;
     l.bindTooltip('🌿 ' + esc(z.name) + (n ? ' · ' + n + ' раст.' : ''), { permanent: true, direction: 'center', className: 'shape-label' });
     shapeLayers.push(l);
   });
-  shapeRecs().forEach(s => {
+  shapeRecs().filter(s => !ed(s.id)).forEach(s => {
     const t = SHAPE_TYPES[s.type] || SHAPE_TYPES['Другое'];
     const l = L.polygon(s.pts, { color: t.c, weight: 2, fillColor: t.c, fillOpacity: 0.35, interactive: false }).addTo(map);
     l.bindTooltip(t.e + ' ' + (s.name || s.type) + ' · ' + Math.round(areaM2(s.pts)) + ' м²', { permanent: true, direction: 'center', className: 'shape-label' });
@@ -265,17 +265,59 @@ function openZoneCard(z) {
     <button class="b" id="z-go">🔍 Приблизить и добавлять</button>
     <h3>Что здесь растёт</h3>
     ${items.map(p => `<div class="card" data-id="${p.id}"><div class="t">${cropEmoji(p.crop)} ${esc(p.crop)}${p.variety ? ' · ' + esc(p.variety) : ''}</div><div class="s">Посажено ${fmt(p.plantedAt)}</div></div>`).join('') || '<div class="muted">Пока пусто</div>'}
-    <div style="margin-top:12px"><button class="b sec" id="z-edit">✏️ Название и цвет</button><button class="b red" id="z-del">Удалить зону</button></div>`);
+    <div style="margin-top:12px"><button class="b sec" id="z-edit">✏️ Название и цвет</button><button class="b sec" id="z-shape">📐 Править контур</button><button class="b red" id="z-del">Удалить зону</button></div>`);
   $('#z-x').onclick = closeSheet;
   $('#z-go').onclick = () => { closeSheet(); switchView('map'); map.fitBounds(L.polygon(z.pts).getBounds().pad(0.1), { maxZoom: 20 }); setTimeout(() => { hint('Нажмите на карте внутри зоны «' + z.name + '», чтобы добавить растение'); setTimeout(() => hint(''), 4000); }, 300); };
   $('#z-edit').onclick = () => askZone(null, z);
+  $('#z-shape').onclick = () => startEdit(z);
   $('#z-del').onclick = async () => { if (confirm('Удалить зону «' + z.name + '»? Растения в ней останутся.')) { z.deleted = true; await save(z); closeSheet(); } };
   sbody.querySelectorAll('.card').forEach(c => c.onclick = () => openCard(c.dataset.id));
 }
+/* --- правка контура: перетаскивание точек, добавление и удаление --- */
+const vIcon = L.divIcon({ className: '', html: '<div class="vtx"></div>', iconSize: [26, 26], iconAnchor: [13, 13] });
+const mIcon = L.divIcon({ className: '', html: '<div class="vtx mid"></div>', iconSize: [18, 18], iconAnchor: [9, 9] });
+function startEdit(rec) {
+  closeSheet(); switchView('map');
+  editing = { rec, pts: rec.pts.map(p => [p[0], p[1]]) };
+  $('#editbar').style.display = 'flex'; $('#btn-gps').style.display = 'none';
+  renderShapes(); drawEdit();
+  map.fitBounds(L.polygon(editing.pts).getBounds().pad(0.3), { maxZoom: 20 });
+}
+function editInfo() {
+  const a = areaM2(editing.pts);
+  hint('Тяните белые точки на нужное место. Маленькие точки между ними — нажмите, чтобы добавить угол. Нажмите на угол, чтобы удалить его. Площадь: ' + Math.round(a) + ' м² (≈ ' + (a / 100).toFixed(1) + ' сот.)');
+}
+function drawEdit() {
+  if (editLayer) editLayer.remove();
+  const pts = editing.pts, n = pts.length, g = L.layerGroup();
+  const poly = L.polygon(pts, { color: '#fff', weight: 2, dashArray: '4 4', fillColor: '#fff', fillOpacity: 0.12, interactive: false });
+  g.addLayer(poly);
+  pts.forEach((p, i) => {
+    const q = pts[(i + 1) % n], mid = [(p[0] + q[0]) / 2, (p[1] + q[1]) / 2];
+    const mm = L.marker(mid, { icon: mIcon }); mm.on('click', e => { L.DomEvent.stopPropagation(e); pts.splice(i + 1, 0, mid); drawEdit(); }); g.addLayer(mm);
+  });
+  pts.forEach((p, i) => {
+    const m = L.marker(p, { icon: vIcon, draggable: true });
+    m.on('drag', e => { const ll = e.target.getLatLng(); pts[i] = [ll.lat, ll.lng]; poly.setLatLngs(pts); editInfo(); });
+    m.on('dragend', drawEdit);
+    m.on('click', e => { L.DomEvent.stopPropagation(e); if (n > 3 && confirm('Удалить этот угол?')) { pts.splice(i, 1); drawEdit(); } else if (n <= 3) hint('Нужно минимум 3 угла'); });
+    g.addLayer(m);
+  });
+  editLayer = g.addTo(map); editInfo();
+}
+function stopEdit() {
+  editing = null; if (editLayer) editLayer.remove(); editLayer = null;
+  $('#editbar').style.display = 'none'; $('#btn-gps').style.display = ''; hint(''); renderShapes();
+}
+async function finishEdit() {
+  const rec = editing.rec; rec.pts = editing.pts; stopEdit(); await save(rec);
+  hint('✅ Контур сохранён. Площадь ≈ ' + sotki(rec.pts).toFixed(1) + ' сот. (' + Math.round(areaM2(rec.pts)) + ' м²)'); setTimeout(() => hint(''), 5000);
+}
 function initTools() {
   $('#v-map').insertAdjacentHTML('beforeend', `<div class="tools"><button id="t-layer" title="Слой карты">🛰️</button><button id="t-plot" title="Обвести границы участка">▢</button><button id="t-zone" title="Отметить зону (сад, виноградник, клумба…)">🌿</button><button id="t-bld" title="Обвести строение">🏠</button><button id="t-grid" title="Сетка 1×1 м">🔳</button><button id="t-fit" title="К моему участку">🎯</button></div>
-    <div id="drawbar" class="drawbar" style="display:none"><button class="b sec" id="d-undo">↩ Убрать точку</button><button class="b" id="d-ok">✓ Готово</button><button class="b red" id="d-no">✕</button></div>`);
-  L.DomEvent.disableClickPropagation($('.tools')); L.DomEvent.disableClickPropagation($('#drawbar'));
+    <div id="drawbar" class="drawbar" style="display:none"><button class="b sec" id="d-undo">↩ Убрать точку</button><button class="b" id="d-ok">✓ Готово</button><button class="b red" id="d-no">✕</button></div>
+    <div id="editbar" class="drawbar" style="display:none"><button class="b" id="e-ok">✓ Сохранить контур</button><button class="b red" id="e-no">✕ Отмена</button></div>`);
+  L.DomEvent.disableClickPropagation($('.tools')); L.DomEvent.disableClickPropagation($('#drawbar')); L.DomEvent.disableClickPropagation($('#editbar'));
   const names = Object.keys(LAYER_NAMES);
   $('#t-layer').onclick = () => { const n = names[(names.indexOf(curLayer) + 1) % names.length]; setLayer(n); hint(LAYER_NAMES[n]); setTimeout(() => hint(''), 1800); };
   $('#t-plot').onclick = () => { if (plotRec() && !confirm('Обвести границы участка заново? Старые границы будут заменены.')) return; startDraw('plot'); };
@@ -290,6 +332,8 @@ function initTools() {
   $('#d-undo').onclick = () => { drawing.pop(); redrawDraft(); };
   $('#d-ok').onclick = finishDraw;
   $('#d-no').onclick = stopDraw;
+  $('#e-ok').onclick = finishEdit;
+  $('#e-no').onclick = stopEdit;
 }
 async function goHome() {
   const h = await DB.getMeta('home');
@@ -337,6 +381,7 @@ function locate(center) {
   });
 }
 function onMapTap(ll) {
+  if (editing) return;
   if (drawing) { drawing.push([ll.lat, ll.lng]); redrawDraft(); return; }
   if (movingId) {
     const p = plantings.find(x => x.id === movingId); movingId = null; hint('');
@@ -512,10 +557,11 @@ async function renderSettings() {
     <label style="display:inline-block" class="b sec">Загрузить из файла<input id="s-imp" type="file" accept=".json" hidden></label>
     <h3>Участок, зоны и строения</h3>
     <div class="muted">${plotRec() ? 'Участок: ≈ ' + sotki(plotRec().pts).toFixed(1) + ' сот. (' + Math.round(areaM2(plotRec().pts)) + ' м²)' : 'Границы участка ещё не обведены (кнопка ▢ на карте).'}</div>
+    ${plotRec() ? '<button class="b sec" data-sh="edit:plot">📐 Править границы участка</button>' : ''}
     ${zoneRecs().map(z => `<div class="card"><div class="t">🌿 ${esc(z.name)}</div><div class="s">Зона · ${Math.round(areaM2(z.pts))} м² · растений: ${inZone(z).length}</div>
-      <button class="b sec" data-sh="card:${z.id}">Открыть</button><button class="b sec" data-sh="show:${z.id}">На карте</button><button class="b red" data-sh="del:${z.id}">Удалить</button></div>`).join('')}
+      <button class="b sec" data-sh="card:${z.id}">Открыть</button><button class="b sec" data-sh="show:${z.id}">На карте</button><button class="b sec" data-sh="edit:${z.id}">📐 Контур</button><button class="b red" data-sh="del:${z.id}">Удалить</button></div>`).join('')}
     ${shapeRecs().map(s => `<div class="card"><div class="t">${(SHAPE_TYPES[s.type] || SHAPE_TYPES['Другое']).e} ${esc(s.name || s.type)}</div><div class="s">${esc(s.type)} · ${Math.round(areaM2(s.pts))} м²</div>
-      <button class="b sec" data-sh="show:${s.id}">На карте</button><button class="b sec" data-sh="ren:${s.id}">Переименовать</button><button class="b red" data-sh="del:${s.id}">Удалить</button></div>`).join('')}
+      <button class="b sec" data-sh="show:${s.id}">На карте</button><button class="b sec" data-sh="ren:${s.id}">Переименовать</button><button class="b sec" data-sh="edit:${s.id}">📐 Контур</button><button class="b red" data-sh="del:${s.id}">Удалить</button></div>`).join('')}
     <h3>Слой карты</h3>
     <label>Максимальная детализация снимка (если при приближении видите «Map data not yet available» — уменьшите)</label>
     <select id="s-z"><option>15</option><option>16</option><option>17</option><option>18</option><option>19</option></select>
@@ -526,6 +572,7 @@ async function renderSettings() {
   $('#v-set').querySelectorAll('[data-sh]').forEach(b => b.onclick = async () => {
     const [act, id] = b.dataset.sh.split(':'), s = plantings.find(x => x.id === id); if (!s) return;
     if (act === 'card') { openZoneCard(s); return; }
+    if (act === 'edit') { startEdit(s); return; }
     if (act === 'show') { switchView('map'); map.fitBounds(L.polygon(s.pts).getBounds().pad(0.4)); }
     else if (act === 'ren') { const nm = prompt('Название строения', s.name || ''); if (nm !== null) { s.name = nm.trim(); await save(s); renderSettings(); } }
     else if (act === 'del' && confirm('Удалить «' + (s.name || s.type) + '»?')) { s.deleted = true; await save(s); renderSettings(); }
