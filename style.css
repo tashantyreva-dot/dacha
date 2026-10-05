@@ -52,3 +52,5 @@ h3{margin:14px 0 6px}
 .swatches{display:flex;gap:8px;flex-wrap:wrap}
 .sw{width:36px;height:36px;border-radius:50%;border:3px solid #fff;box-shadow:0 0 0 1px #999;padding:0}
 .sw.on{box-shadow:0 0 0 3px #222}
+.vtx{width:26px;height:26px;border-radius:50%;background:#fff;border:3px solid #e53935;box-shadow:0 0 4px #000a;box-sizing:border-box}
+.vtx.mid{width:16px;height:16px;margin:5px;background:#fff9;border:2px solid #e53935}
