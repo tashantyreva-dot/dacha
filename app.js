@@ -16,7 +16,7 @@ const CROPS = {
   'Тыква': { e: '🎃', harvest: [90, 130], tips: 'Любит солнце, воду и питание. Пасынковать плети, оставить 2-3 плода.', tasks: [[21, 'Подкормка'], [50, 'Прищипнуть плети']] },
   'Редис': { e: '🌰', harvest: [20, 35], tips: 'Быстрая культура. Не загущать, поливать регулярно, иначе пустеет.', tasks: [[10, 'Прореживание']] },
   'Зелень (укроп, петрушка)': { e: '🌿', harvest: [30, 60], tips: 'Сеять с перерывом 2 недели. Срезать по мере надобности.', tasks: [[10, 'Прореживание']] },
-  'Горох': { e: '🫛', harvest: [55, 80], tips: 'Нужна опора. Собирать регулярно.', tasks: [[14, 'Установить опору']] },
+  'Горох': { e: '🫘', harvest: [55, 80], tips: 'Нужна опора. Собирать регулярно.', tasks: [[14, 'Установить опору']] },
   'Фасоль': { e: '🫘', harvest: [60, 100], tips: 'Не любит переувлажнения. Сеять после заморозков.', tasks: [[14, 'Прополка, рыхление']] },
   'Клубника': { e: '🍓', harvest: [30, 60], tips: 'Мульчировать, усы убирать. После сбора урожая подкормить и омолодить.', tasks: [[14, 'Подкормка'], [30, 'Мульча под ягоды']] },
   'Малина': { e: '🍇', harvest: [365, 730], tips: 'Обрезать плодоносившие побеги осенью. Подкормка весной азотом.', tasks: [[30, 'Подкормка']] },
@@ -93,6 +93,11 @@ let layers = {}, curLayer = 'sat', plotLayer = null, shapeLayers = [], gridLayer
 let drawing = null, drawKind = null, draftLayer = null;
 const plotRec = () => plantings.find(p => p.kind === 'plot' && !p.deleted);
 const shapeRecs = () => plantings.filter(p => p.kind === 'shape' && !p.deleted);
+const zoneRecs = () => plantings.filter(p => p.kind === 'zone' && !p.deleted);
+const ZONE_COLORS = ['#43a047', '#8e24aa', '#e53935', '#fb8c00', '#fdd835', '#1e88e5', '#d81b60', '#6d4c41'];
+// зона, в которой лежит точка (если вложены друг в друга — берём самую маленькую)
+const zoneAt = (lat, lng) => zoneRecs().filter(z => inPoly([lat, lng], z.pts)).sort((a, b) => areaM2(a.pts) - areaM2(b.pts))[0];
+const inZone = z => live().filter(p => p.lat != null && inPoly([p.lat, p.lng], z.pts));
 
 async function initMap() {
   const home = await DB.getMeta('home');
@@ -189,6 +194,12 @@ function renderShapes() {
     plotLayer = L.polygon(pr.pts, { color: '#f9a825', weight: 3, dashArray: '8 6', fillColor: '#f9a825', fillOpacity: 0.07, interactive: false }).addTo(map);
     plotLayer.bindTooltip('Участок ≈ ' + sotki(pr.pts).toFixed(1) + ' сот.', { permanent: true, direction: 'center', className: 'shape-label' });
   }
+  zoneRecs().forEach(z => {
+    const l = L.polygon(z.pts, { color: z.color, weight: 2, dashArray: '2 5', fillColor: z.color, fillOpacity: 0.16, interactive: false }).addTo(map);
+    const n = inZone(z).length;
+    l.bindTooltip('🌿 ' + esc(z.name) + (n ? ' · ' + n + ' раст.' : ''), { permanent: true, direction: 'center', className: 'shape-label' });
+    shapeLayers.push(l);
+  });
   shapeRecs().forEach(s => {
     const t = SHAPE_TYPES[s.type] || SHAPE_TYPES['Другое'];
     const l = L.polygon(s.pts, { color: t.c, weight: 2, fillColor: t.c, fillOpacity: 0.35, interactive: false }).addTo(map);
@@ -200,7 +211,7 @@ function renderShapes() {
 function redrawDraft() {
   if (draftLayer) draftLayer.remove();
   draftLayer = L.layerGroup([L.polyline(drawing, { color: '#f9a825', weight: 3, interactive: false }), ...drawing.map(p => L.circleMarker(p, { radius: 6, color: '#fff', weight: 2, fillColor: '#f9a825', fillOpacity: 1, interactive: false }))]).addTo(map);
-  const what = drawKind === 'plot' ? 'участка' : 'строения';
+  const what = drawKind === 'plot' ? 'участка' : drawKind === 'zone' ? 'зоны' : 'строения';
   hint(drawing.length < 3 ? 'Нажимайте на углы ' + what + ' по кругу (минимум 3 точки). Сейчас точек: ' + drawing.length : 'Точек: ' + drawing.length + '. Нажмите «Готово», когда обошли весь контур.');
 }
 function startDraw(kind) {
@@ -219,7 +230,8 @@ async function finishDraw() {
     await saveHome(true);
     hint('✅ Границы сохранены. Площадь участка ≈ ' + sotki(pts).toFixed(1) + ' сот. (' + Math.round(areaM2(pts)) + ' м²). Сетка 1×1 м появится при приближении.');
     setTimeout(() => hint(''), 9000);
-  } else askShape(pts);
+  } else if (kind === 'zone') askZone(pts);
+  else askShape(pts);
 }
 function askShape(pts) {
   openSheet(`<h3 style="margin-top:0">Что это за строение?</h3>
@@ -230,14 +242,45 @@ function askShape(pts) {
   $('#sh-no').onclick = closeSheet;
   $('#sh-ok').onclick = async () => { await save({ id: uid(), kind: 'shape', type: $('#sh-type').value, name: $('#sh-name').value.trim(), pts }); closeSheet(); };
 }
+function askZone(pts, rec) {
+  const z = rec || { id: uid(), kind: 'zone', name: '', color: ZONE_COLORS[zoneRecs().length % ZONE_COLORS.length], pts };
+  openSheet(`<h3 style="margin-top:0">${rec ? 'Изменить зону' : 'Новая зона'}</h3>
+    <label>Название зоны</label><input id="z-name" value="${esc(z.name)}" placeholder="например, «Плодовый сад», «Виноградник», «Клумба у дома»">
+    <label>Цвет</label><div class="swatches">${ZONE_COLORS.map(c => `<button class="sw${c === z.color ? ' on' : ''}" data-c="${c}" style="background:${c}"></button>`).join('')}</div>
+    <p class="muted">Площадь: ${Math.round(areaM2(z.pts))} м² (≈ ${sotki(z.pts).toFixed(1)} сот.)</p>
+    <button class="b" id="z-ok">Сохранить</button><button class="b sec" id="z-no">Отмена</button>`);
+  sbody.querySelectorAll('.sw').forEach(b => b.onclick = () => { z.color = b.dataset.c; sbody.querySelectorAll('.sw').forEach(x => x.classList.toggle('on', x === b)); });
+  $('#z-no').onclick = closeSheet;
+  $('#z-ok').onclick = async () => {
+    const nm = $('#z-name').value.trim(); if (!nm) return alert('Введите название зоны');
+    z.name = nm; await save(z); closeSheet();
+  };
+}
+function openZoneCard(z) {
+  const items = inZone(z).sort((a, b) => b.plantedAt.localeCompare(a.plantedAt));
+  openSheet(`
+    <div class="h"><h3 style="margin:0">🌿 ${esc(z.name)}</h3><button id="z-x">✕</button></div>
+    <div class="muted">${Math.round(areaM2(z.pts))} м² (≈ ${sotki(z.pts).toFixed(1)} сот.) · растений: ${items.length}</div>
+    <p class="muted">Чтобы добавить растение — приблизьте карту (зона остаётся на месте) и нажмите в нужной точке внутри зоны.</p>
+    <button class="b" id="z-go">🔍 Приблизить и добавлять</button>
+    <h3>Что здесь растёт</h3>
+    ${items.map(p => `<div class="card" data-id="${p.id}"><div class="t">${cropEmoji(p.crop)} ${esc(p.crop)}${p.variety ? ' · ' + esc(p.variety) : ''}</div><div class="s">Посажено ${fmt(p.plantedAt)}</div></div>`).join('') || '<div class="muted">Пока пусто</div>'}
+    <div style="margin-top:12px"><button class="b sec" id="z-edit">✏️ Название и цвет</button><button class="b red" id="z-del">Удалить зону</button></div>`);
+  $('#z-x').onclick = closeSheet;
+  $('#z-go').onclick = () => { closeSheet(); switchView('map'); map.fitBounds(L.polygon(z.pts).getBounds().pad(0.1), { maxZoom: 20 }); setTimeout(() => { hint('Нажмите на карте внутри зоны «' + z.name + '», чтобы добавить растение'); setTimeout(() => hint(''), 4000); }, 300); };
+  $('#z-edit').onclick = () => askZone(null, z);
+  $('#z-del').onclick = async () => { if (confirm('Удалить зону «' + z.name + '»? Растения в ней останутся.')) { z.deleted = true; await save(z); closeSheet(); } };
+  sbody.querySelectorAll('.card').forEach(c => c.onclick = () => openCard(c.dataset.id));
+}
 function initTools() {
-  $('#v-map').insertAdjacentHTML('beforeend', `<div class="tools"><button id="t-layer" title="Слой карты">🛰️</button><button id="t-plot" title="Обвести границы участка">▢</button><button id="t-bld" title="Обвести строение">🏠</button><button id="t-grid" title="Сетка 1×1 м">🔳</button><button id="t-fit" title="К моему участку">🎯</button></div>
+  $('#v-map').insertAdjacentHTML('beforeend', `<div class="tools"><button id="t-layer" title="Слой карты">🛰️</button><button id="t-plot" title="Обвести границы участка">▢</button><button id="t-zone" title="Отметить зону (сад, виноградник, клумба…)">🌿</button><button id="t-bld" title="Обвести строение">🏠</button><button id="t-grid" title="Сетка 1×1 м">🔳</button><button id="t-fit" title="К моему участку">🎯</button></div>
     <div id="drawbar" class="drawbar" style="display:none"><button class="b sec" id="d-undo">↩ Убрать точку</button><button class="b" id="d-ok">✓ Готово</button><button class="b red" id="d-no">✕</button></div>`);
   L.DomEvent.disableClickPropagation($('.tools')); L.DomEvent.disableClickPropagation($('#drawbar'));
   const names = Object.keys(LAYER_NAMES);
   $('#t-layer').onclick = () => { const n = names[(names.indexOf(curLayer) + 1) % names.length]; setLayer(n); hint(LAYER_NAMES[n]); setTimeout(() => hint(''), 1800); };
   $('#t-plot').onclick = () => { if (plotRec() && !confirm('Обвести границы участка заново? Старые границы будут заменены.')) return; startDraw('plot'); };
   $('#t-bld').onclick = () => startDraw('building');
+  $('#t-zone').onclick = () => startDraw('zone');
   $('#t-grid').onclick = () => {
     if (!plotRec()) { hint('Сначала обведите границы участка (кнопка ▢)'); setTimeout(() => hint(''), 3000); return; }
     gridOn = !gridOn; DB.setMeta('grid', gridOn); drawGrid();
@@ -300,6 +343,8 @@ function onMapTap(ll) {
     if (p) { p.lat = ll.lat; p.lng = ll.lng; save(p); }
     return;
   }
+  const z = zoneAt(ll.lat, ll.lng);
+  if (z && map.getZoom() < 18) { openZoneCard(z); return; }   // издалека — карточка зоны, вблизи — новая посадка
   openForm(null, snap(ll));
 }
 function hint(t) { const h = $('#hint'); h.textContent = t; h.style.display = t ? 'block' : 'none'; }
@@ -357,7 +402,7 @@ function openCard(id) {
   const win = hv ? `Ожидаемый сбор: ${fmt(addDays(p.plantedAt, hv[0]))} — ${fmt(addDays(p.plantedAt, hv[1]))}` : '';
   openSheet(`
     <div class="h"><h3 style="margin:0">${cropEmoji(p.crop)} ${esc(p.crop)}${p.variety ? ' · ' + esc(p.variety) : ''}</h3><button id="c-x">✕</button></div>
-    <div class="muted">Посажено ${fmt(p.plantedAt)} (${age >= 0 ? age + ' дн. назад' : 'через ' + (-age) + ' дн.'})</div>
+    <div class="muted">Посажено ${fmt(p.plantedAt)} (${age >= 0 ? age + ' дн. назад' : 'через ' + (-age) + ' дн.'})${p.lat != null && zoneAt(p.lat, p.lng) ? ' · зона: ' + esc(zoneAt(p.lat, p.lng).name) : ''}</div>
     ${p.note ? `<p>${esc(p.note).replace(/\n/g, '<br>')}</p>` : ''}
     <div class="photos">${(p.photos || []).map((s, i) => `<img src="${s}" data-i="${i}">`).join('')}</div>
     <label>Добавить фото</label><input id="c-photo" type="file" accept="image/*" capture="environment">
@@ -415,7 +460,7 @@ function renderList() {
     const q = $('#q').value.toLowerCase();
     $('#items').innerHTML = items.filter(p => (p.crop + p.variety + p.note).toLowerCase().includes(q)).map(p => `
       <div class="card" data-id="${p.id}"><div class="t">${cropEmoji(p.crop)} ${esc(p.crop)}${p.variety ? ' · ' + esc(p.variety) : ''}</div>
-      <div class="s">Посажено ${fmt(p.plantedAt)}${p.lat == null ? ' · без места на карте' : ''}</div></div>`).join('') || '<div class="muted">Посадок за этот год нет. Нажмите на карту, чтобы добавить.</div>';
+      <div class="s">Посажено ${fmt(p.plantedAt)}${p.lat == null ? ' · без места на карте' : (zoneAt(p.lat, p.lng) ? ' · ' + esc(zoneAt(p.lat, p.lng).name) : '')}</div></div>`).join('') || '<div class="muted">Посадок за этот год нет. Нажмите на карту, чтобы добавить.</div>';
     $('#items').querySelectorAll('.card').forEach(c => c.onclick = () => openCard(c.dataset.id));
   };
   $('#q').oninput = draw; draw();
@@ -465,8 +510,10 @@ async function renderSettings() {
     <h3>Файл-копия</h3>
     <button class="b sec" id="s-exp">Сохранить в файл</button>
     <label style="display:inline-block" class="b sec">Загрузить из файла<input id="s-imp" type="file" accept=".json" hidden></label>
-    <h3>Участок и строения</h3>
+    <h3>Участок, зоны и строения</h3>
     <div class="muted">${plotRec() ? 'Участок: ≈ ' + sotki(plotRec().pts).toFixed(1) + ' сот. (' + Math.round(areaM2(plotRec().pts)) + ' м²)' : 'Границы участка ещё не обведены (кнопка ▢ на карте).'}</div>
+    ${zoneRecs().map(z => `<div class="card"><div class="t">🌿 ${esc(z.name)}</div><div class="s">Зона · ${Math.round(areaM2(z.pts))} м² · растений: ${inZone(z).length}</div>
+      <button class="b sec" data-sh="card:${z.id}">Открыть</button><button class="b sec" data-sh="show:${z.id}">На карте</button><button class="b red" data-sh="del:${z.id}">Удалить</button></div>`).join('')}
     ${shapeRecs().map(s => `<div class="card"><div class="t">${(SHAPE_TYPES[s.type] || SHAPE_TYPES['Другое']).e} ${esc(s.name || s.type)}</div><div class="s">${esc(s.type)} · ${Math.round(areaM2(s.pts))} м²</div>
       <button class="b sec" data-sh="show:${s.id}">На карте</button><button class="b sec" data-sh="ren:${s.id}">Переименовать</button><button class="b red" data-sh="del:${s.id}">Удалить</button></div>`).join('')}
     <h3>Слой карты</h3>
@@ -478,6 +525,7 @@ async function renderSettings() {
   $('#s-dl').onclick = downloadTiles;
   $('#v-set').querySelectorAll('[data-sh]').forEach(b => b.onclick = async () => {
     const [act, id] = b.dataset.sh.split(':'), s = plantings.find(x => x.id === id); if (!s) return;
+    if (act === 'card') { openZoneCard(s); return; }
     if (act === 'show') { switchView('map'); map.fitBounds(L.polygon(s.pts).getBounds().pad(0.4)); }
     else if (act === 'ren') { const nm = prompt('Название строения', s.name || ''); if (nm !== null) { s.name = nm.trim(); await save(s); renderSettings(); } }
     else if (act === 'del' && confirm('Удалить «' + (s.name || s.type) + '»?')) { s.deleted = true; await save(s); renderSettings(); }
