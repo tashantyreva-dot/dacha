@@ -32,6 +32,8 @@ button.b.red{background:#c62828}
 .photos img{width:80px;height:80px;object-fit:cover;border-radius:8px}
 .tips{background:#f1f8e9;border-radius:8px;padding:8px 10px;font-size:14px;margin-top:8px}
 .pin{font-size:26px;line-height:1;text-shadow:0 0 3px #fff,0 0 3px #fff,0 0 6px #000}
+.ico{width:1.15em;height:1.15em;vertical-align:-.2em}
+.pin .ico{filter:drop-shadow(0 0 2px #fff) drop-shadow(0 0 3px #000)}
 h3{margin:14px 0 6px}
 .muted{color:#777;font-size:13px}
 .h{display:flex;justify-content:space-between;align-items:center;margin:4px 0}
