@@ -329,7 +329,7 @@ function askShape(pts) {
   $('#sh-ok').onclick = async () => { await save({ id: uid(), kind: 'shape', type: $('#sh-type').value, name: $('#sh-name').value.trim(), pts }); closeSheet(); };
 }
 function askZone(pts, rec) {
-  const z = rec || { id: uid(), kind: 'zone', name: '', color: ZONE_COLORS[zoneRecs().length % ZONE_COLORS.length], pts };
+  const z = rec ? { ...rec } : { id: uid(), kind: 'zone', name: '', color: ZONE_COLORS[zoneRecs().length % ZONE_COLORS.length], pts };   // правим копию: «Отмена» ничего не меняет
   openSheet(`<h3 style="margin-top:0">${rec ? 'Изменить зону' : 'Новая зона'}</h3>
     <label>Название зоны</label><input id="z-name" value="${esc(z.name)}" placeholder="например, «Плодовый сад», «Виноградник», «Клумба у дома»">
     <label>Цвет</label><div class="swatches">${ZONE_COLORS.map(c => `<button class="sw${c === z.color ? ' on' : ''}" data-c="${c}" style="background:${c}"></button>`).join('')}</div>
@@ -339,7 +339,7 @@ function askZone(pts, rec) {
   $('#z-no').onclick = closeSheet;
   $('#z-ok').onclick = async () => {
     const nm = $('#z-name').value.trim(); if (!nm) return alert('Введите название зоны');
-    z.name = nm; await save(z); closeSheet();
+    z.name = nm; await save(rec ? Object.assign(rec, z) : z); closeSheet();
   };
 }
 function openZoneCard(z) {
