@@ -69,6 +69,7 @@ const DB = {
 let plantings = [];      // включая «удалённые» (tombstone) для синхронизации
 let year = new Date().getFullYear();
 let map, markers = {}, movingId = null;
+let focusZone = null, prevLayer = null, satOp = 1, snapOn = true;   // режим «внутри зоны»
 const live = () => plantings.filter(p => !p.deleted && !p.kind);   // записи с kind (граница, строения) — не посадки
 const inYear = () => live().filter(p => cropInfo(p.crop).obj || new Date(p.plantedAt).getFullYear() === year || (p.harvests || []).some(h => new Date(h.date).getFullYear() === year));
 
@@ -105,11 +106,13 @@ const inZone = z => live().filter(p => p.lat != null && inPoly([p.lat, p.lng], z
 async function initMap() {
   const home = await DB.getMeta('home');
   const c = home || { lat: 55.75, lng: 37.6, z: 10, fresh: true };
-  map = L.map('map', { zoomControl: false, maxZoom: 21 }).setView([c.lat, c.lng], c.z);
+  map = L.map('map', { zoomControl: false, maxZoom: 24 }).setView([c.lat, c.lng], c.z);
   L.control.zoom({ position: 'topright' }).addTo(map);
-  layers.sat = L.tileLayer(TILE, { maxNativeZoom: (await DB.getMeta('satZoom')) || 17, maxZoom: 21, attribution: 'Esri' });
-  layers.osm = L.tileLayer(OSM, { maxNativeZoom: 19, maxZoom: 21, attribution: '© OpenStreetMap' });
+  layers.sat = L.tileLayer(TILE, { maxNativeZoom: (await DB.getMeta('satZoom')) || 17, maxZoom: 24, attribution: 'Esri' });
+  layers.osm = L.tileLayer(OSM, { maxNativeZoom: 19, maxZoom: 24, attribution: '© OpenStreetMap' });
   gridOn = (await DB.getMeta('grid')) !== false;
+  satOp = (await DB.getMeta('satOp')) || 1; layers.sat.setOpacity(satOp);
+  snapOn = (await DB.getMeta('snap')) !== false;
   // перенос границ участка из старой версии в общие данные (чтобы они попадали в облако)
   const old = await DB.getMeta('plot');
   if (old && !plantings.some(p => p.kind === 'plot')) { const rec = { id: 'plot', kind: 'plot', pts: old, updatedAt: Date.now() }; plantings.push(rec); await DB.put(rec); }
@@ -124,7 +127,7 @@ function setLayer(name) {
   curLayer = name;
   ['sat', 'osm'].forEach(k => { if (k === name) layers[k].addTo(map); else layers[k].remove(); });
   $('#map').style.background = name === 'blank' ? '#eef3e6' : '';
-  DB.setMeta('layer', name);
+  if (!focusZone) DB.setMeta('layer', name);
   drawGrid();
 }
 
@@ -150,18 +153,23 @@ function inPoly(p, q) {
 const sotki = pts => areaM2(pts) / 100;
 
 /* --- сетка 1×1 м внутри границ участка --- */
+const centroid = pts => [pts.reduce((a, p) => a + p[0], 0) / pts.length, pts.reduce((a, p) => a + p[1], 0) / pts.length];
+// система координат сетки: берём участок, в котором лежит зона, — чтобы клетки зоны совпадали с клетками участка
+const gridRec = z => plotAt(...centroid(z.pts)) || z;
 function drawGrid() {
   if (gridLayer) gridLayer.remove(); gridLayer = null;
-  const recs = plotRecs(), z = map.getZoom();
-  if (!gridOn || !recs.length || z < 18) return;
-  const step = z >= 19 ? 1 : 5, thin = [], thick = [], col = curLayer === 'sat' ? '#ffffff' : '#546e7a';
-  recs.forEach(rec => {
-    const f = frame(rec.pts), q = rec.pts.map(f.to), n = q.length;
+  const z = map.getZoom();
+  const items = focusZone ? [{ rec: gridRec(focusZone), poly: focusZone.pts }] : plotRecs().map(r => ({ rec: r, poly: r.pts }));
+  if (!items.length || (!focusZone && (!gridOn || z < 18))) return;
+  const step = z >= 22 ? 0.1 : z >= 19 ? 1 : 5, every = step === 0.1 ? 10 : step === 1 ? 5 : 1;
+  const thin = [], thick = [], col = curLayer === 'sat' ? '#ffffff' : '#546e7a';
+  items.forEach(({ rec, poly }) => {
+    const f = frame(rec.pts), q = poly.map(f.to), n = q.length;
     [0, 1].forEach(axis => {
       const vals = q.map(p => p[axis]);
-      const lo = Math.ceil(Math.min(...vals) / step) * step, hi = Math.floor(Math.max(...vals) / step) * step;
-      for (let v = lo; v <= hi; v += step) {
-        const xs = [];
+      const k0 = Math.ceil(Math.min(...vals) / step - 1e-9), k1 = Math.floor(Math.max(...vals) / step + 1e-9);
+      for (let k = k0; k <= k1; k++) {
+        const v = k * step, xs = [];
         for (let i = 0; i < n; i++) {
           const p = q[i], r = q[(i + 1) % n], pv = p[axis], rv = r[axis];
           if ((pv <= v && v < rv) || (rv <= v && v < pv)) xs.push(p[1 - axis] + (v - pv) / (rv - pv) * (r[1 - axis] - p[1 - axis]));
@@ -169,7 +177,7 @@ function drawGrid() {
         xs.sort((x, y) => x - y);
         for (let i = 0; i + 1 < xs.length; i += 2) {
           const seg = axis ? [[xs[i], v], [xs[i + 1], v]] : [[v, xs[i]], [v, xs[i + 1]]];
-          (v % 5 === 0 ? thick : thin).push(seg.map(f.from));
+          (k % every === 0 ? thick : thin).push(seg.map(f.from));
         }
       }
     });
@@ -181,8 +189,15 @@ function drawGrid() {
 }
 // привязка новой метки к центру клетки сетки (когда сетка видна и точка внутри участка)
 function snap(ll) {
+  const z = map.getZoom();
+  if (focusZone) {   // внутри зоны: к центру клетки (1 м, а при сильном приближении 10 см) или свободно
+    if (!snapOn || z < 19) return ll;
+    const st = z >= 22 ? 0.1 : 1, f = frame(gridRec(focusZone).pts), p = f.to([ll.lat, ll.lng]);
+    const [lat, lng] = f.from([(Math.floor(p[0] / st) + 0.5) * st, (Math.floor(p[1] / st) + 0.5) * st]);
+    return { lat, lng };
+  }
   const rec = plotAt(ll.lat, ll.lng);
-  if (!gridOn || !rec || map.getZoom() < 19) return ll;
+  if (!gridOn || !rec || z < 19) return ll;
   const f = frame(rec.pts), q = rec.pts.map(f.to), p = f.to([ll.lat, ll.lng]);
   if (!inPoly(p, q)) return ll;
   const [lat, lng] = f.from([Math.floor(p[0]) + 0.5, Math.floor(p[1]) + 0.5]);
@@ -201,8 +216,8 @@ function renderShapes() {
     return l;
   });
   if (pls.length) plotLayer = L.featureGroup(pls).addTo(map);
-  zoneRecs().filter(z => !ed(z.id)).forEach(z => {
-    const l = L.polygon(z.pts, { color: z.color, weight: 2, dashArray: '2 5', fillColor: z.color, fillOpacity: 0.16, interactive: false }).addTo(map);
+  zoneRecs().filter(z => !ed(z.id) && (!focusZone || z.id === focusZone.id)).forEach(z => {
+    const l = L.polygon(z.pts, { color: z.color, weight: 2, dashArray: '2 5', fillColor: z.color, fillOpacity: focusZone ? 0.04 : 0.16, interactive: false }).addTo(map);
     const n = inZone(z).length;
     l.bindTooltip('🌿 ' + esc(z.name) + (n ? ' · ' + n + ' раст.' : ''), { permanent: true, direction: 'center', className: 'shape-label' });
     shapeLayers.push(l);
@@ -228,8 +243,10 @@ function stopDraw() {
   drawing = null; if (draftLayer) draftLayer.remove(); draftLayer = null;
   $('#drawbar').style.display = 'none'; $('#btn-gps').style.display = ''; hint('');
 }
+const outsidePlot = pts => plotRecs().length > 0 && pts.some(p => !plotAt(p[0], p[1]));
 async function finishDraw() {
   if (drawing.length < 3) return alert('Нужно минимум 3 точки');
+  if (drawKind === 'zone' && outsidePlot(drawing) && !confirm('Часть углов зоны лежит за границей участка. Всё равно сохранить? (Отмена — вернуться и поправить точки)')) return;
   const pts = drawing, kind = drawKind; stopDraw();
   if (kind === 'plot') askPlot(pts);
   else if (kind === 'zone') askZone(pts);
@@ -257,6 +274,30 @@ function parseCoords(text) {
   for (let i = 0; i + 1 < n.length; i += 2) pts.push([n[i], n[i + 1]]);
   if (pts.length < 3 || n.length % 2 || pts.some(p => Math.abs(p[0]) > 90 || Math.abs(p[1]) > 180)) return null;
   return pts;
+}
+// контуры из GeoJSON или KML → [{name, pts:[[lat,lng],…]}]
+function parseShapesFile(text, fname) {
+  const out = [], ring = c => { const r = c.map(x => [+x[1], +x[0]]); if (r.length > 1 && r[0][0] === r[r.length - 1][0] && r[0][1] === r[r.length - 1][1]) r.pop(); return r; };
+  const add = (name, pts) => { if (pts.length >= 3 && pts.every(p => isFinite(p[0]) && isFinite(p[1]))) out.push({ name: name || '', pts }); };
+  try {
+    if (/\.kml$/i.test(fname) || text.trim().startsWith('<')) {
+      const doc = new DOMParser().parseFromString(text, 'text/xml');
+      doc.querySelectorAll('Placemark').forEach(pm => {
+        const nm = (pm.querySelector('name') || {}).textContent || '';
+        pm.querySelectorAll('Polygon outerBoundaryIs coordinates, Polygon coordinates').forEach(c => add(nm.trim(), ring(c.textContent.trim().split(/\s+/).map(t => t.split(',')))));
+      });
+    } else {
+      const walk = (g, name) => {
+        if (!g) return;
+        if (g.type === 'FeatureCollection') g.features.forEach(x => walk(x));
+        else if (g.type === 'Feature') { const pr = g.properties || {}; walk(g.geometry, pr.name || pr.cadnum || pr.cad_num || pr.kadnum || pr.label || ''); }
+        else if (g.type === 'Polygon') add(name, ring(g.coordinates[0]));
+        else if (g.type === 'MultiPolygon') g.coordinates.forEach(pg => add(name, ring(pg[0])));
+      };
+      walk(JSON.parse(text));
+    }
+  } catch (_) {}
+  return out.slice(0, 30);
 }
 function askShape(pts) {
   openSheet(`<h3 style="margin-top:0">Что это за строение?</h3>
@@ -287,12 +328,12 @@ function openZoneCard(z) {
     <div class="h"><h3 style="margin:0">🌿 ${esc(z.name)}</h3><button id="z-x">✕</button></div>
     <div class="muted">${Math.round(areaM2(z.pts))} м² (≈ ${sotki(z.pts).toFixed(1)} сот.) · растений: ${items.length}</div>
     <p class="muted">Чтобы добавить растение — приблизьте карту (зона остаётся на месте) и нажмите в нужной точке внутри зоны.</p>
-    <button class="b" id="z-go">🔍 Приблизить и добавлять</button>
+    <button class="b" id="z-go">🔍 Войти в зону (чистая сетка, до сантиметров)</button>
     <h3>Что здесь растёт</h3>
     ${items.map(p => `<div class="card" data-id="${p.id}"><div class="t">${cropEmoji(p.crop)} ${esc(p.crop)}${p.variety ? ' · ' + esc(p.variety) : ''}</div><div class="s">Посажено ${fmt(p.plantedAt)}</div></div>`).join('') || '<div class="muted">Пока пусто</div>'}
     <div style="margin-top:12px"><button class="b sec" id="z-edit">✏️ Название и цвет</button><button class="b sec" id="z-shape">📐 Править контур</button><button class="b red" id="z-del">Удалить зону</button></div>`);
   $('#z-x').onclick = closeSheet;
-  $('#z-go').onclick = () => { closeSheet(); switchView('map'); map.fitBounds(L.polygon(z.pts).getBounds().pad(0.1), { maxZoom: 20 }); setTimeout(() => { hint('Нажмите на карте внутри зоны «' + z.name + '», чтобы добавить растение'); setTimeout(() => hint(''), 4000); }, 300); };
+  $('#z-go').onclick = () => enterZone(z);
   $('#z-edit').onclick = () => askZone(null, z);
   $('#z-shape').onclick = () => startEdit(z);
   $('#z-del').onclick = async () => { if (confirm('Удалить зону «' + z.name + '»? Растения в ней останутся.')) { z.deleted = true; await save(z); closeSheet(); } };
@@ -335,14 +376,53 @@ function stopEdit() {
   $('#editbar').style.display = 'none'; $('#btn-gps').style.display = ''; hint(''); renderShapes();
 }
 async function finishEdit() {
+  if (editing.rec.kind === 'zone' && outsidePlot(editing.pts) && !confirm('Часть углов зоны лежит за границей участка. Всё равно сохранить? (Отмена — продолжить правку)')) return;
   const rec = editing.rec; rec.pts = editing.pts; stopEdit(); await save(rec);
   hint('✅ Контур сохранён. Площадь ≈ ' + sotki(rec.pts).toFixed(1) + ' сот. (' + Math.round(areaM2(rec.pts)) + ' м²)'); setTimeout(() => hint(''), 5000);
 }
+/* --- режим «внутри зоны»: чистый план, сетка 1 м (10 см при сильном приближении), только растения этой зоны --- */
+function focusUi() {
+  $('#f-name').textContent = '🌿 ' + (focusZone ? focusZone.name : '');
+  $('#f-snap').textContent = snapOn ? '🧲 К центру клетки' : '✋ Где нажму';
+}
+function enterZone(z) {
+  closeSheet(); switchView('map');
+  if (editing) stopEdit();
+  if (!focusZone) prevLayer = curLayer;
+  focusZone = z; setLayer('blank');
+  $('#focusbar').style.display = 'flex'; $('#btn-gps').style.display = 'none'; focusUi();
+  renderShapes(); renderMarkers();
+  setTimeout(() => {
+    map.invalidateSize(); map.fitBounds(L.polygon(z.pts).getBounds().pad(0.1), { maxZoom: 21 });
+    hint('Вы внутри зоны «' + z.name + '». Приближайте сколько нужно и нажимайте там, где посадили. Слой 🛰️ — подсказка, 🌓 — прозрачность.'); setTimeout(() => hint(''), 6000);
+  }, 80);
+}
+function exitZone() {
+  if (!focusZone) return;
+  const z = focusZone; focusZone = null;
+  setLayer(prevLayer || 'sat'); prevLayer = null;
+  $('#focusbar').style.display = 'none'; $('#btn-gps').style.display = ''; hint('');
+  renderShapes(); renderMarkers();
+  map.fitBounds(L.polygon(z.pts).getBounds().pad(0.5), { maxZoom: 19 });
+}
+/* --- пошаговый путь --- */
+function openSteps() {
+  const st = [
+    [plotRecs().length > 0, '1. Границы участка', 'Обведите участок на карте или внесите координаты из НСПД (Ещё → Участок).', '▢ Обвести участок', () => { closeSheet(); startDraw('plot'); }],
+    [shapeRecs().length > 0, '2. Постройки', 'Дом, теплицы, сараи — обведите по спутнику (слой 🛰️).', '🏠 Обвести строение', () => { closeSheet(); startDraw('building'); }],
+    [zoneRecs().length > 0, '3. Зоны', 'Картошка, виноградник, клубника — любые названия.', '🌿 Отметить зону', () => { closeSheet(); startDraw('zone'); }],
+    [live().length > 0, '4. Посадки', 'Войдите в зону, приблизьте и ставьте точки там, где посадили.', '🔎 Войти в зону', () => { closeSheet(); $('#t-in').click(); }]
+  ];
+  openSheet('<h3 style="margin-top:0">🧭 Шаги</h3>' + st.map((x, i) => `<div class="card"><div class="t">${x[0] ? '✅' : '⬜'} ${x[1]}</div><div class="s">${x[2]}</div><button class="b${x[0] ? ' sec' : ''}" data-i="${i}">${x[3]}</button></div>`).join('') + '<button class="b sec" id="st-x">Закрыть</button>');
+  sbody.querySelectorAll('[data-i]').forEach(b => b.onclick = () => st[+b.dataset.i][4]());
+  $('#st-x').onclick = closeSheet;
+}
 function initTools() {
-  $('#v-map').insertAdjacentHTML('beforeend', `<div class="tools"><button id="t-layer" title="Слой карты">🛰️</button><button id="t-plot" title="Обвести границы участка">▢</button><button id="t-zone" title="Отметить зону (сад, виноградник, клумба…)">🌿</button><button id="t-bld" title="Обвести строение">🏠</button><button id="t-grid" title="Сетка 1×1 м">🔳</button><button id="t-fit" title="К моему участку">🎯</button></div>
+  $('#v-map').insertAdjacentHTML('beforeend', `<div class="tools"><button id="t-layer" title="Слой карты">🛰️</button><button id="t-plot" title="Обвести границы участка">▢</button><button id="t-zone" title="Отметить зону (сад, виноградник, клумба…)">🌿</button><button id="t-bld" title="Обвести строение">🏠</button><button id="t-grid" title="Сетка 1×1 м">🔳</button><button id="t-op" title="Прозрачность спутника">🌓</button><button id="t-in" title="Войти в зону">🔎</button><button id="t-steps" title="Шаги: что делать дальше">🧭</button><button id="t-fit" title="К моему участку">🎯</button></div>
     <div id="drawbar" class="drawbar" style="display:none"><button class="b sec" id="d-undo">↩ Убрать точку</button><button class="b" id="d-ok">✓ Готово</button><button class="b red" id="d-no">✕</button></div>
+    <div id="focusbar" class="drawbar focusbar" style="display:none"><span id="f-name"></span><button class="b sec" id="f-snap"></button><button class="b red" id="f-out">✕ Выйти</button></div>
     <div id="editbar" class="drawbar" style="display:none"><button class="b" id="e-ok">✓ Сохранить контур</button><button class="b red" id="e-no">✕ Отмена</button></div>`);
-  L.DomEvent.disableClickPropagation($('.tools')); L.DomEvent.disableClickPropagation($('#drawbar')); L.DomEvent.disableClickPropagation($('#editbar'));
+  L.DomEvent.disableClickPropagation($('.tools')); L.DomEvent.disableClickPropagation($('#drawbar')); L.DomEvent.disableClickPropagation($('#editbar')); L.DomEvent.disableClickPropagation($('#focusbar'));
   const names = Object.keys(LAYER_NAMES);
   $('#t-layer').onclick = () => { const n = names[(names.indexOf(curLayer) + 1) % names.length]; setLayer(n); hint(LAYER_NAMES[n]); setTimeout(() => hint(''), 1800); };
   $('#t-plot').onclick = () => startDraw('plot');
@@ -353,7 +433,22 @@ function initTools() {
     gridOn = !gridOn; DB.setMeta('grid', gridOn); drawGrid();
     hint(gridOn ? 'Сетка 1×1 м включена (видна при приближении, метки встают в центр клетки)' : 'Сетка выключена'); setTimeout(() => hint(''), 3000);
   };
-  $('#t-fit').onclick = () => { if (plotLayer) map.fitBounds(plotLayer.getBounds().pad(0.1)); else goHome(); };
+  $('#t-op').onclick = () => {
+    satOp = satOp > 0.9 ? 0.6 : satOp > 0.5 ? 0.3 : 1; layers.sat.setOpacity(satOp); DB.setMeta('satOp', satOp);
+    hint('Прозрачность снимка: ' + Math.round(satOp * 100) + '%' + (curLayer === 'sat' ? '' : ' (включите слой 🛰️, чтобы увидеть)')); setTimeout(() => hint(''), 2000);
+  };
+  $('#t-in').onclick = () => {
+    const zs = zoneRecs(), c = map.getCenter();
+    const z = zoneAt(c.lat, c.lng) || (zs.length === 1 ? zs[0] : null);
+    if (z) return enterZone(z);
+    if (!zs.length) { hint('Зон пока нет. Нажмите 🌿 и обведите первую зону.'); setTimeout(() => hint(''), 3000); return; }
+    openSheet('<h3 style="margin-top:0">В какую зону войти?</h3>' + zs.map(x => `<div class="card" data-id="${x.id}"><div class="t">🌿 ${esc(x.name)}</div><div class="s">${Math.round(areaM2(x.pts))} м²</div></div>`).join(''));
+    sbody.querySelectorAll('.card').forEach(c => c.onclick = () => enterZone(zs.find(x => x.id === c.dataset.id)));
+  };
+  $('#t-steps').onclick = openSteps;
+  $('#f-out').onclick = exitZone;
+  $('#f-snap').onclick = () => { snapOn = !snapOn; DB.setMeta('snap', snapOn); focusUi(); };
+  $('#t-fit').onclick = () => { if (focusZone) return map.fitBounds(L.polygon(focusZone.pts).getBounds().pad(0.1), { maxZoom: 21 }); if (plotLayer) map.fitBounds(plotLayer.getBounds().pad(0.1)); else goHome(); };
   $('#d-undo').onclick = () => { drawing.pop(); redrawDraft(); };
   $('#d-ok').onclick = finishDraw;
   $('#d-no').onclick = stopDraw;
@@ -413,6 +508,10 @@ function onMapTap(ll) {
     if (p) { p.lat = ll.lat; p.lng = ll.lng; save(p); }
     return;
   }
+  if (focusZone) {
+    if (!inPoly([ll.lat, ll.lng], focusZone.pts)) { hint('Это вне зоны «' + focusZone.name + '». Нажмите внутри зоны или выйдите из неё.'); setTimeout(() => hint(''), 2500); return; }
+    openForm(null, snap(ll)); return;
+  }
   const z = zoneAt(ll.lat, ll.lng);
   if (z && map.getZoom() < 18) { openZoneCard(z); return; }   // издалека — карточка зоны, вблизи — новая посадка
   openForm(null, snap(ll));
@@ -422,6 +521,7 @@ function renderMarkers() {
   Object.values(markers).forEach(m => m.remove()); markers = {};
   inYear().forEach(p => {
     if (p.lat == null) return;
+    if (focusZone && !inPoly([p.lat, p.lng], focusZone.pts)) return;
     const icon = L.divIcon({ className: '', html: `<div class="pin">${cropEmoji(p.crop)}</div>`, iconSize: [30, 30], iconAnchor: [15, 15] });
     const m = L.marker([p.lat, p.lng], { icon }).addTo(map);
     m.bindTooltip(esc(p.crop + (p.variety ? ' · ' + p.variety : '')), { direction: 'top', offset: [0, -12] });
@@ -587,6 +687,7 @@ async function renderSettings() {
     <input id="pc-name" placeholder="Название или кадастровый номер">
     <textarea id="pc-pts" placeholder="56.2712204, 42.0451489&#10;56.2708457, 42.0456484&#10;..."></textarea>
     <button class="b" id="pc-add">+ Добавить участок</button>
+    <label style="display:inline-block" class="b sec">Загрузить контуры из файла (GeoJSON / KML)<input id="pc-file" type="file" accept=".geojson,.json,.kml,application/json,application/vnd.google-earth.kml+xml" hidden></label>
     ${zoneRecs().map(z => `<div class="card"><div class="t">🌿 ${esc(z.name)}</div><div class="s">Зона · ${Math.round(areaM2(z.pts))} м² · растений: ${inZone(z).length}</div>
       <button class="b sec" data-sh="card:${z.id}">Открыть</button><button class="b sec" data-sh="show:${z.id}">На карте</button><button class="b sec" data-sh="edit:${z.id}">📐 Контур</button><button class="b red" data-sh="del:${z.id}">Удалить</button></div>`).join('')}
     ${shapeRecs().map(s => `<div class="card"><div class="t">${(SHAPE_TYPES[s.type] || SHAPE_TYPES['Другое']).e} ${esc(s.name || s.type)}</div><div class="s">${esc(s.type)} · ${Math.round(areaM2(s.pts))} м²</div>
@@ -602,6 +703,13 @@ async function renderSettings() {
     const pts = parseCoords($('#pc-pts').value);
     if (!pts) return alert('Не получилось разобрать координаты. Нужно минимум 3 пары чисел: широта, долгота, по одной паре на строку.');
     switchView('map'); await addPlot($('#pc-name').value.trim(), pts, uid());
+  };
+  $('#pc-file').onchange = async e => {
+    const f = e.target.files[0]; if (!f) return;
+    const list = parseShapesFile(await f.text(), f.name);
+    if (!list.length) return alert('В файле не нашёл ни одного контура (нужны полигоны GeoJSON или KML).');
+    if (!confirm('Найдено контуров: ' + list.length + '. Добавить как участки?\n' + list.slice(0, 6).map(x => '• ' + (x.name || 'без названия') + ' ≈ ' + sotki(x.pts).toFixed(1) + ' сот.').join('\n'))) return;
+    switchView('map'); for (const x of list) await addPlot(x.name, x.pts, uid());
   };
   $('#v-set').querySelectorAll('[data-sh]').forEach(b => b.onclick = async () => {
     const [act, id] = b.dataset.sh.split(':'), s = plantings.find(x => x.id === id); if (!s) return;
