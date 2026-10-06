@@ -61,3 +61,9 @@ h3{margin:14px 0 6px}
 ::placeholder{color:#b0b0b0;opacity:1}
 .pgroup{margin-bottom:14px}
 .pin-list{margin-left:14px;padding-left:8px;border-left:3px solid #f9a825}
+.tree details{margin-bottom:8px}
+.tree summary{cursor:pointer;font-weight:600;padding:8px 10px;background:#fff;border-radius:10px;margin-bottom:6px;box-shadow:0 1px 3px #0002;list-style:none}
+.tree summary::-webkit-details-marker{display:none}
+.tree summary::before{content:'▾ '}
+.tree details:not([open])>summary::before{content:'▸ '}
+.tree .tgap{margin:6px 0 4px}
