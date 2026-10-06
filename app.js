@@ -111,8 +111,18 @@ const inZone = z => live().filter(p => p.lat != null && inPoly([p.lat, p.lng], z
 async function initMap() {
   const home = await DB.getMeta('home');
   const c = home || { lat: 55.75, lng: 37.6, z: 10, fresh: true };
-  map = L.map('map', { zoomControl: false, maxZoom: 24 }).setView([c.lat, c.lng], c.z);
+  map = L.map('map', { zoomControl: false, attributionControl: false, maxZoom: 24 }).setView([c.lat, c.lng], c.z);
   L.control.zoom({ position: 'topright' }).addTo(map);
+  // источники карты: по условиям лицензий они должны быть доступны, поэтому спрятаны за маленькую кнопку ⓘ
+  const cr = L.control({ position: 'bottomright' });
+  cr.onAdd = () => {
+    const d = L.DomUtil.create('div'); d.style.cssText = 'display:flex;align-items:flex-end;gap:4px;margin:0 6px 6px 0';
+    d.innerHTML = '<span style="display:none;background:#fffe;border-radius:6px;padding:3px 6px;font-size:11px">Снимки: Esri · Схема: © OpenStreetMap · Leaflet</span><button title="Источники карты" style="width:22px;height:22px;border:0;border-radius:50%;background:#fff9;font-size:13px;line-height:22px;padding:0;color:#555">ⓘ</button>';
+    L.DomEvent.disableClickPropagation(d);
+    d.querySelector('button').onclick = () => { const t = d.querySelector('span'); t.style.display = t.style.display === 'none' ? '' : 'none'; };
+    return d;
+  };
+  cr.addTo(map);
   layers.sat = L.tileLayer(TILE, { maxNativeZoom: (await DB.getMeta('satZoom')) || 17, maxZoom: 24, attribution: 'Esri' });
   layers.osm = L.tileLayer(OSM, { maxNativeZoom: 19, maxZoom: 24, attribution: '© OpenStreetMap' });
   gridOn = (await DB.getMeta('grid')) !== false;
