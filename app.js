@@ -18,10 +18,13 @@ const CROPS = {
   'Зелень (укроп, петрушка)': { e: '🌿', harvest: [30, 60], tips: 'Сеять с перерывом 2 недели. Срезать по мере надобности.', tasks: [[10, 'Прореживание']] },
   'Горох': { e: '🫘', harvest: [55, 80], tips: 'Нужна опора. Собирать регулярно.', tasks: [[14, 'Установить опору']] },
   'Фасоль': { e: '🫘', harvest: [60, 100], tips: 'Не любит переувлажнения. Сеять после заморозков.', tasks: [[14, 'Прополка, рыхление']] },
-  'Клубника': { e: '🍓', harvest: [30, 60], tips: 'Мульчировать, усы убирать. После сбора урожая подкормить и омолодить.', tasks: [[14, 'Подкормка'], [30, 'Мульча под ягоды']] },
-  'Малина': { e: '🍇', harvest: [365, 730], tips: 'Обрезать плодоносившие побеги осенью. Подкормка весной азотом.', tasks: [[30, 'Подкормка']] },
-  'Яблоня': { e: '🍎', harvest: [1095, 2000], tips: 'Обрезка зимой/ранней весной. Побелка штамба осенью. Полив первые 3 года.', tasks: [[30, 'Полив, мульча'], [365, 'Весенняя обрезка и подкормка']] },
-  'Смородина': { e: '🫐', harvest: [365, 730], tips: 'Обновляющая обрезка осенью. Мульча.', tasks: [[30, 'Подкормка']] },
+  'Клубника': { e: '🍓', per: 1, harvest: [30, 60], tips: 'Мульчировать, усы убирать. После сбора урожая подкормить и омолодить.', tasks: [[14, 'Подкормка'], [30, 'Мульча под ягоды']] },
+  'Малина': { per: 1, e: '🍇', harvest: [365, 730], tips: 'Обрезать плодоносившие побеги осенью. Подкормка весной азотом.', tasks: [[30, 'Подкормка']] },
+  'Яблоня': { per: 1, e: '🍎', harvest: [1095, 2000], tips: 'Обрезка зимой/ранней весной. Побелка штамба осенью. Полив первые 3 года.', tasks: [[30, 'Полив, мульча'], [365, 'Весенняя обрезка и подкормка']] },
+  'Смородина': { per: 1, e: '🫐', harvest: [365, 730], tips: 'Обновляющая обрезка осенью. Мульча.', tasks: [[30, 'Подкормка']] },
+  'Виноград': { e: '🍇', per: 1, harvest: [1095, 1500], tips: 'Обрезка осенью или ранней весной, укрытие на зиму в холодных районах. Подвязка лозы, подкормка весной.', tasks: [[30, 'Полив, мульча'], [365, 'Весенняя обрезка и подкормка']] },
+  'Груша': { e: '🍐', per: 1, harvest: [1460, 2200], tips: 'Обрезка ранней весной, побелка осенью.', tasks: [[365, 'Весенняя обрезка и подкормка']] },
+  'Вишня': { e: '🍒', per: 1, harvest: [1095, 1800], tips: 'Обрезка ранней весной, побелка осенью.', tasks: [[365, 'Весенняя обрезка и подкормка']] },
   'Цветы': { e: '🌷', harvest: [30, 90], tips: 'Поливать по погоде, подкармливать при бутонизации.', tasks: [[14, 'Подкормка']] },
   'Теплица': { e: '🏕️', obj: true, harvest: null, tips: '', tasks: [] },
   'Дом': { e: '🏠', obj: true, harvest: null, tips: '', tasks: [] },
@@ -30,6 +33,7 @@ const CROPS = {
   'Грядка': { e: '🟫', obj: true, harvest: null, tips: '', tasks: [] },
   'Другое': { e: '🌱', harvest: [60, 120], tips: '', tasks: [] }
 };
+const isPer = p => p.perennial != null ? !!p.perennial : !!cropInfo(p.crop).per;
 const cropInfo = n => CROPS[n] || CROPS['Другое'];
 const cropEmoji = n => (CROPS[n] ? CROPS[n].e : '🌱');
 
@@ -71,7 +75,8 @@ let year = new Date().getFullYear();
 let map, markers = {}, movingId = null;
 let focusZone = null, prevLayer = null, satOp = 1, snapOn = true;   // режим «внутри зоны»
 const live = () => plantings.filter(p => !p.deleted && !p.kind);   // записи с kind (граница, строения) — не посадки
-const inYear = () => live().filter(p => cropInfo(p.crop).obj || new Date(p.plantedAt).getFullYear() === year || (p.harvests || []).some(h => new Date(h.date).getFullYear() === year));
+const yOf = d => new Date(d).getFullYear();
+const inYear = () => live().filter(p => cropInfo(p.crop).obj || yOf(p.plantedAt) === year || (p.harvests || []).some(h => yOf(h.date) === year) || (isPer(p) && yOf(p.plantedAt) <= year && !(p.removedAt && yOf(p.removedAt) < year)));
 
 async function save(p) {
   p.updatedAt = Date.now();
@@ -551,13 +556,20 @@ function openForm(p, ll) {
     <label>Культура</label><input id="f-crop" list="crops" value="${esc(p.crop)}" placeholder="Томат, огурец, яблоня…">
     <label>Сорт</label><input id="f-var" value="${esc(p.variety)}">
     <label>Дата посадки</label><input id="f-date" type="date" value="${p.plantedAt}">
+    <label>Как растёт</label><select id="f-per"><option value="0">Однолетнее (каждый год сажаю заново)</option><option value="1">Многолетнее (растёт много лет)</option></select>
+    <label>Убрано / выкорчевано (если уже нет)</label><input id="f-rm" type="date" value="${p.removedAt || ''}">
     <label>Заметка (сколько, где именно, как сажал)</label><textarea id="f-note">${esc(p.note)}</textarea>
     <button class="b" id="f-ok">Сохранить</button><button class="b sec" id="f-no">Отмена</button>`);
   $('#f-no').onclick = closeSheet;
+  let perTouched = !isNew;
+  $('#f-per').value = isPer(p) ? '1' : '0';
+  $('#f-per').onchange = () => { perTouched = true; };
+  $('#f-crop').oninput = () => { if (!perTouched) $('#f-per').value = cropInfo($('#f-crop').value.trim()).per ? '1' : '0'; };
   $('#f-ok').onclick = async () => {
     const crop = $('#f-crop').value.trim();
     if (!crop) return alert('Укажите культуру');
     p.crop = crop; p.variety = $('#f-var').value.trim(); p.plantedAt = $('#f-date').value || today(); p.note = $('#f-note').value;
+    p.perennial = $('#f-per').value === '1'; p.removedAt = $('#f-rm').value || '';
     await save(p); closeSheet();
     if (isNew) { year = new Date(p.plantedAt).getFullYear(); renderAll(); }
   };
@@ -630,7 +642,7 @@ function renderList() {
     const q = $('#q').value.toLowerCase();
     $('#items').innerHTML = items.filter(p => (p.crop + p.variety + p.note).toLowerCase().includes(q)).map(p => `
       <div class="card" data-id="${p.id}"><div class="t">${cropEmoji(p.crop)} ${esc(p.crop)}${p.variety ? ' · ' + esc(p.variety) : ''}</div>
-      <div class="s">Посажено ${fmt(p.plantedAt)}${p.lat == null ? ' · без места на карте' : (zoneAt(p.lat, p.lng) ? ' · ' + esc(zoneAt(p.lat, p.lng).name) : '')}</div></div>`).join('') || '<div class="muted">Посадок за этот год нет. Нажмите на карту, чтобы добавить.</div>';
+      <div class="s">${isPer(p) ? '🌳 многолетнее · ' : ''}Посажено ${fmt(p.plantedAt)}${p.removedAt ? ' · убрано ' + fmt(p.removedAt) : ''}${p.lat == null ? ' · без места на карте' : (zoneAt(p.lat, p.lng) ? ' · ' + esc(zoneAt(p.lat, p.lng).name) : '')}</div></div>`).join('') || '<div class="muted">Посадок за этот год нет. Нажмите на карту, чтобы добавить.</div>';
     $('#items').querySelectorAll('.card').forEach(c => c.onclick = () => openCard(c.dataset.id));
   };
   $('#q').oninput = draw; draw();
