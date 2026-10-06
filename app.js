@@ -329,7 +329,7 @@ function askShape(pts) {
   $('#sh-ok').onclick = async () => { await save({ id: uid(), kind: 'shape', type: $('#sh-type').value, name: $('#sh-name').value.trim(), pts }); closeSheet(); };
 }
 function askZone(pts, rec) {
-  const z = rec || { id: uid(), kind: 'zone', name: '', color: ZONE_COLORS[zoneRecs().length % ZONE_COLORS.length], pts };
+  const z = rec ? { ...rec } : { id: uid(), kind: 'zone', name: '', color: ZONE_COLORS[zoneRecs().length % ZONE_COLORS.length], pts };   // правим копию: «Отмена» ничего не меняет
   openSheet(`<h3 style="margin-top:0">${rec ? 'Изменить зону' : 'Новая зона'}</h3>
     <label>Название зоны</label><input id="z-name" value="${esc(z.name)}" placeholder="например, «Плодовый сад», «Виноградник», «Клумба у дома»">
     <label>Цвет</label><div class="swatches">${ZONE_COLORS.map(c => `<button class="sw${c === z.color ? ' on' : ''}" data-c="${c}" style="background:${c}"></button>`).join('')}</div>
@@ -339,7 +339,7 @@ function askZone(pts, rec) {
   $('#z-no').onclick = closeSheet;
   $('#z-ok').onclick = async () => {
     const nm = $('#z-name').value.trim(); if (!nm) return alert('Введите название зоны');
-    z.name = nm; await save(z); closeSheet();
+    z.name = nm; await save(rec ? Object.assign(rec, z) : z); closeSheet();
   };
 }
 function openZoneCard(z) {
@@ -593,8 +593,9 @@ function openForm(p, ll) {
 function openCard(id) {
   const p = plantings.find(x => x.id === id); if (!p) return;
   const info = cropInfo(p.crop), age = daysBetween(p.plantedAt, today());
-  const total = (p.harvests || []).reduce((a, h) => a + (+h.amount || 0), 0);
-  const units = [...new Set((p.harvests || []).map(h => h.unit))].join(', ');
+  const byUnit = {};   // сумма отдельно по каждой единице: кг к кг, штуки к штукам
+  (p.harvests || []).forEach(h => { byUnit[h.unit] = (byUnit[h.unit] || 0) + (+h.amount || 0); });
+  const totalTxt = Object.entries(byUnit).map(([u, v]) => +v.toFixed(2) + ' ' + u).join(', ');
   const hv = info.harvest;
   const win = hv ? `Ожидаемый сбор: ${fmt(addDays(p.plantedAt, hv[0]))} — ${fmt(addDays(p.plantedAt, hv[1]))}` : '';
   openSheet(`
@@ -603,7 +604,7 @@ function openCard(id) {
     ${p.note ? `<p>${esc(p.note).replace(/\n/g, '<br>')}</p>` : ''}
     <div class="photos">${(p.photos || []).map((s, i) => `<img src="${s}" data-i="${i}">`).join('')}</div>
     <label>Добавить фото</label><input id="c-photo" type="file" accept="image/*" capture="environment">
-    <h3>Урожай${total ? ` — всего ${+total.toFixed(2)} ${esc(units)}` : ''}</h3>
+    <h3>Урожай${totalTxt ? ` — всего ${esc(totalTxt)}` : ''}</h3>
     ${(p.harvests || []).map((h, i) => `<div class="h"><span>${fmt(h.date)} — ${esc(h.amount)} ${esc(h.unit)}</span><button data-hd="${i}">🗑</button></div>`).join('') || '<div class="muted">Пока ничего не собрано</div>'}
     <div class="row" style="margin-top:8px"><input id="h-date" type="date" value="${today()}"><input id="h-amt" type="number" step="any" inputmode="decimal" placeholder="Сколько"><select id="h-unit"><option>кг</option><option>шт</option><option>вёдра</option><option>л</option></select></div>
     <button class="b" id="h-add">+ Записать сбор</button>
