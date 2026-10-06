@@ -111,7 +111,7 @@ const zoneRecs = () => plantings.filter(p => p.kind === 'zone' && !p.deleted);
 const ZONE_COLORS = ['#43a047', '#8e24aa', '#e53935', '#fb8c00', '#fdd835', '#1e88e5', '#d81b60', '#6d4c41'];
 // зона, в которой лежит точка (если вложены друг в друга — берём самую маленькую)
 const zoneAt = (lat, lng) => zoneRecs().filter(z => inPoly([lat, lng], z.pts)).sort((a, b) => areaM2(a.pts) - areaM2(b.pts))[0];
-const inZone = z => live().filter(p => p.lat != null && inPoly([p.lat, p.lng], z.pts));
+const inZone = z => inYear().filter(p => p.lat != null && inPoly([p.lat, p.lng], z.pts));   // растения выбранного на экране года (как на карте)
 
 async function initMap() {
   const home = await DB.getMeta('home');
@@ -349,7 +349,7 @@ function openZoneCard(z) {
     <div class="muted">${Math.round(areaM2(z.pts))} м² (≈ ${sotki(z.pts).toFixed(1)} сот.) · растений: ${items.length}</div>
     <p class="muted">Чтобы добавить растение — приблизьте карту (зона остаётся на месте) и нажмите в нужной точке внутри зоны.</p>
     <button class="b" id="z-go">🔍 Войти в зону (чистая сетка, до сантиметров)</button>
-    <h3>Что здесь растёт</h3>
+    <h3>Что здесь растёт в ${year} году</h3>
     ${items.map(p => `<div class="card" data-id="${p.id}"><div class="t">${cropEmoji(p.crop)} ${esc(p.crop)}${p.variety ? ' · ' + esc(p.variety) : ''}</div><div class="s">Посажено ${fmt(p.plantedAt)}</div></div>`).join('') || '<div class="muted">Пока пусто</div>'}
     <div style="margin-top:12px"><button class="b sec" id="z-edit">✏️ Название и цвет</button><button class="b sec" id="z-shape">📐 Править контур</button><button class="b red" id="z-del">Удалить зону</button></div>`);
   $('#z-x').onclick = closeSheet;
@@ -670,14 +670,21 @@ function renderTodo() {
     const info = cropInfo(p.crop); p.done = p.done || [];
     if (p.removedAt && p.removedAt <= t) return;   // убрано или выкорчевано — напоминаний нет
     info.tasks.forEach(([d, text], i) => {
-      // у многолетних годовые дела (от 365 дней) повторяются каждый год; k — номер года
-      const years = isPer(p) && d >= 365 ? 60 : 1;
-      for (let k = 0; k < years; k++) {
-        const due = addDays(p.plantedAt, d + 365 * k), key = i + ':' + text + (k ? ':' + k : '');
-        if (p.done.includes(key)) continue;
-        const diff = daysBetween(t, due);
-        if (diff <= 3 && diff >= -30) list.push({ p, due, diff, text, key });
+      if (isPer(p) && d >= 365) {
+        // годовые дела многолетних («Весенняя обрезка…») — каждую календарную весну (1 апреля), начиная с весны после года посадки
+        const y0 = yOf(p.plantedAt);
+        for (let y = y0 + 1; y <= y0 + 60; y++) {
+          const due = y + '-04-01', key = i + ':' + text + ':' + y;
+          if (p.done.includes(key) || (y === y0 + 1 && p.done.includes(i + ':' + text))) continue;
+          const diff = daysBetween(t, due);
+          if (diff <= 3 && diff >= -30) list.push({ p, due, diff, text, key });
+        }
+        return;
       }
+      const due = addDays(p.plantedAt, d), key = i + ':' + text;
+      if (p.done.includes(key)) return;
+      const diff = daysBetween(t, due);
+      if (diff <= 3 && diff >= -30) list.push({ p, due, diff, text, key });
     });
     if (info.harvest) {
       const a = addDays(p.plantedAt, info.harvest[0]), b = addDays(p.plantedAt, info.harvest[1]);
