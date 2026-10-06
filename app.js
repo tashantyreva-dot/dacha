@@ -283,6 +283,19 @@ async function addPlot(name, pts, id) {
   hint('✅ Участок сохранён: ≈ ' + sotki(pts).toFixed(1) + ' сот. (' + Math.round(areaM2(pts)) + ' м²). Сетка 1×1 м появится при приближении.');
   setTimeout(() => hint(''), 9000);
 }
+// расстояние (км) между центрами двух контуров — чтобы заметить перепутанные широту и долготу
+function kmBetween(a, b) {
+  const [la1, lo1] = centroid(a), [la2, lo2] = centroid(b), r = Math.PI / 180;
+  const dx = (lo2 - lo1) * Math.cos((la1 + la2) / 2 * r), dy = la2 - la1;
+  return Math.hypot(dx, dy) * 111.32;
+}
+// true — можно добавлять; если новый участок далеко от уже заданных, спрашиваем (скорее всего, перепутаны широта и долгота)
+function okFarPlot(pts) {
+  const old = plotRecs()[0];
+  if (!old) return true;
+  const km = kmBetween(old.pts, pts);
+  return km < 30 || confirm('Этот участок находится в ' + Math.round(km) + ' км от уже заданного. Возможно, перепутаны широта и долгота (сначала широта, потом долгота). Всё равно добавить?');
+}
 // «56.27, 42.04» по одной паре на строку → [[lat,lng],…]
 function parseCoords(text) {
   const n = (text.match(/-?\d+(?:[.,]\d+)?/g) || []).map(x => +x.replace(',', '.'));
@@ -290,30 +303,6 @@ function parseCoords(text) {
   for (let i = 0; i + 1 < n.length; i += 2) pts.push([n[i], n[i + 1]]);
   if (pts.length < 3 || n.length % 2 || pts.some(p => Math.abs(p[0]) > 90 || Math.abs(p[1]) > 180)) return null;
   return pts;
-}
-// контуры из GeoJSON или KML → [{name, pts:[[lat,lng],…]}]
-function parseShapesFile(text, fname) {
-  const out = [], ring = c => { const r = c.map(x => [+x[1], +x[0]]); if (r.length > 1 && r[0][0] === r[r.length - 1][0] && r[0][1] === r[r.length - 1][1]) r.pop(); return r; };
-  const add = (name, pts) => { if (pts.length >= 3 && pts.every(p => isFinite(p[0]) && isFinite(p[1]))) out.push({ name: name || '', pts }); };
-  try {
-    if (/\.kml$/i.test(fname) || text.trim().startsWith('<')) {
-      const doc = new DOMParser().parseFromString(text, 'text/xml');
-      doc.querySelectorAll('Placemark').forEach(pm => {
-        const nm = (pm.querySelector('name') || {}).textContent || '';
-        pm.querySelectorAll('Polygon outerBoundaryIs coordinates, Polygon coordinates').forEach(c => add(nm.trim(), ring(c.textContent.trim().split(/\s+/).map(t => t.split(',')))));
-      });
-    } else {
-      const walk = (g, name) => {
-        if (!g) return;
-        if (g.type === 'FeatureCollection') g.features.forEach(x => walk(x));
-        else if (g.type === 'Feature') { const pr = g.properties || {}; walk(g.geometry, pr.name || pr.cadnum || pr.cad_num || pr.kadnum || pr.label || ''); }
-        else if (g.type === 'Polygon') add(name, ring(g.coordinates[0]));
-        else if (g.type === 'MultiPolygon') g.coordinates.forEach(pg => add(name, ring(pg[0])));
-      };
-      walk(JSON.parse(text));
-    }
-  } catch (_) {}
-  return out.slice(0, 30);
 }
 function askShape(pts) {
   openSheet(`<h3 style="margin-top:0">Что это за строение?</h3>
@@ -731,7 +720,6 @@ async function renderSettings() {
     <input id="pc-name" placeholder="Название или кадастровый номер">
     <textarea id="pc-pts" placeholder="Пример (это подсказка, не данные):&#10;55.1234567, 37.1234567&#10;55.1236000, 37.1240000&#10;55.1230000, 37.1242000"></textarea>
     <button class="b" id="pc-add">+ Добавить участок</button><button class="b sec" id="pc-clear">Очистить поля</button>
-    <label style="display:inline-block" class="b sec">Загрузить контуры из файла (GeoJSON / KML)<input id="pc-file" type="file" accept=".geojson,.json,.kml,application/json,application/vnd.google-earth.kml+xml" hidden></label>
     <h3>Слой карты</h3>
     <label>Максимальная детализация снимка (если при приближении видите «Map data not yet available» — уменьшите)</label>
     <select id="s-z"><option>15</option><option>16</option><option>17</option><option>18</option><option>19</option></select>
@@ -742,16 +730,10 @@ async function renderSettings() {
   $('#pc-add').onclick = async () => {
     const pts = parseCoords($('#pc-pts').value);
     if (!pts) return alert('Не получилось разобрать координаты. Нужно минимум 3 пары чисел: широта, долгота, по одной паре на строку.');
+    if (!okFarPlot(pts)) return;
     switchView('map'); await addPlot($('#pc-name').value.trim(), pts, uid());
   };
   $('#pc-clear').onclick = () => { $('#pc-name').value = ''; $('#pc-pts').value = ''; };
-  $('#pc-file').onchange = async e => {
-    const f = e.target.files[0]; if (!f) return;
-    const list = parseShapesFile(await f.text(), f.name);
-    if (!list.length) return alert('В файле не нашёл ни одного контура (нужны полигоны GeoJSON или KML).');
-    if (!confirm('Найдено контуров: ' + list.length + '. Добавить как участки?\n' + list.slice(0, 6).map(x => '• ' + (x.name || 'без названия') + ' ≈ ' + sotki(x.pts).toFixed(1) + ' сот.').join('\n'))) return;
-    switchView('map'); for (const x of list) await addPlot(x.name, x.pts, uid());
-  };
   $('#v-set').querySelectorAll('[data-sh]').forEach(b => b.onclick = async () => {
     const [act, id] = b.dataset.sh.split(':'), s = plantings.find(x => x.id === id); if (!s) return;
     if (act === 'card') { openZoneCard(s); return; }
@@ -869,6 +851,7 @@ async function importFromLink() {
   const [name, rest] = q.includes('@') ? q.split('@') : ['', q];
   const pts = parseCoords((rest || '').replace(/;/g, '\n'));
   if (!pts) return alert('Ссылка с участком повреждена');
+  if (!okFarPlot(pts)) return;
   const id = 'plot-' + (name || 'link').replace(/[^0-9A-Za-zА-Яа-я]+/g, '-');
   if (confirm('Добавить участок «' + (name || 'без названия') + '» ≈ ' + sotki(pts).toFixed(1) + ' сот. (' + Math.round(areaM2(pts)) + ' м²)?')) await addPlot(name, pts, id);
 }
