@@ -661,6 +661,28 @@ function renderTodo() {
   $('#v-todo').querySelectorAll('[data-o]').forEach(b => b.onclick = () => openCard(list[+b.dataset.o].p.id));
 }
 
+// карточки в «Ещё»: каждому участку — свои зоны и постройки (по тому, в каком участке лежит центр контура)
+const ownerOf = rec => plotAt(...centroid(rec.pts));
+function plotCard(p) {
+  return `<div class="card"><div class="t">🟨 ${esc(plotName(p))}</div><div class="s">Участок · ${sotki(p.pts).toFixed(1)} сот. (${Math.round(areaM2(p.pts))} м²)</div>
+      <button class="b sec" data-sh="show:${p.id}">На карте</button><button class="b sec" data-sh="ren:${p.id}">Название</button><button class="b sec" data-sh="edit:${p.id}">📐 Контур</button><button class="b red" data-sh="del:${p.id}">Удалить</button></div>`;
+}
+function zoneCardHtml(z) {
+  return `<div class="card"><div class="t">🌿 ${esc(z.name)}</div><div class="s">Зона · ${Math.round(areaM2(z.pts))} м² · растений: ${inZone(z).length}</div>
+      <button class="b sec" data-sh="card:${z.id}">Открыть</button><button class="b sec" data-sh="show:${z.id}">На карте</button><button class="b sec" data-sh="edit:${z.id}">📐 Контур</button><button class="b red" data-sh="del:${z.id}">Удалить</button></div>`;
+}
+function shapeCardHtml(s) {
+  return `<div class="card"><div class="t">${(SHAPE_TYPES[s.type] || SHAPE_TYPES['Другое']).e} ${esc(s.name || s.type)}</div><div class="s">${esc(s.type)} · ${Math.round(areaM2(s.pts))} м²</div>
+      <button class="b sec" data-sh="show:${s.id}">На карте</button><button class="b sec" data-sh="ren:${s.id}">Переименовать</button><button class="b sec" data-sh="edit:${s.id}">📐 Контур</button><button class="b red" data-sh="del:${s.id}">Удалить</button></div>`;
+}
+function settingsGroups() {
+  const plots = plotRecs(), zs = zoneRecs(), ss = shapeRecs();
+  const inner = (zl, sl) => (zl.length || sl.length) ? zl.map(zoneCardHtml).join('') + sl.map(shapeCardHtml).join('') : '<div class="muted">Зон и построек здесь пока нет</div>';
+  let html = plots.map(p => `<div class="pgroup">${plotCard(p)}<div class="pin-list">${inner(zs.filter(z => ownerOf(z) === p), ss.filter(x => ownerOf(x) === p))}</div></div>`).join('');
+  const lz = zs.filter(z => !ownerOf(z)), ls = ss.filter(x => !ownerOf(x));
+  if (lz.length || ls.length) html += `<div class="pgroup"><div class="card"><div class="t">Вне участков</div><div class="s">Эти зоны и постройки не попали внутрь границ ни одного участка</div></div><div class="pin-list">${inner(lz, ls)}</div></div>`;
+  return html || '<div class="muted">Границы участка ещё не заданы (кнопка ▢ на карте или координаты ниже).</div>';
+}
 async function renderSettings() {
   const cfg = (await DB.getMeta('sync')) || {};
   const last = await DB.getMeta('lastSync');
@@ -681,17 +703,12 @@ async function renderSettings() {
     <button class="b sec" id="s-exp">Сохранить в файл</button>
     <label style="display:inline-block" class="b sec">Загрузить из файла<input id="s-imp" type="file" accept=".json" hidden></label>
     <h3>Участок, зоны и строения</h3>
-    ${plotRecs().map(p => `<div class="card"><div class="t">🟨 ${esc(plotName(p))}</div><div class="s">Участок · ${sotki(p.pts).toFixed(1)} сот. (${Math.round(areaM2(p.pts))} м²)</div>
-      <button class="b sec" data-sh="show:${p.id}">На карте</button><button class="b sec" data-sh="ren:${p.id}">Название</button><button class="b sec" data-sh="edit:${p.id}">📐 Контур</button><button class="b red" data-sh="del:${p.id}">Удалить</button></div>`).join('') || '<div class="muted">Границы участка ещё не заданы (кнопка ▢ на карте или координаты ниже).</div>'}
+    ${settingsGroups()}
     <label>Добавить участок по координатам (широта, долгота — по одной паре на строку, из НСПД)</label>
     <input id="pc-name" placeholder="Название или кадастровый номер">
     <textarea id="pc-pts" placeholder="Пример (это подсказка, не данные):&#10;55.1234567, 37.1234567&#10;55.1236000, 37.1240000&#10;55.1230000, 37.1242000"></textarea>
     <button class="b" id="pc-add">+ Добавить участок</button><button class="b sec" id="pc-clear">Очистить поля</button>
     <label style="display:inline-block" class="b sec">Загрузить контуры из файла (GeoJSON / KML)<input id="pc-file" type="file" accept=".geojson,.json,.kml,application/json,application/vnd.google-earth.kml+xml" hidden></label>
-    ${zoneRecs().map(z => `<div class="card"><div class="t">🌿 ${esc(z.name)}</div><div class="s">Зона · ${Math.round(areaM2(z.pts))} м² · растений: ${inZone(z).length}</div>
-      <button class="b sec" data-sh="card:${z.id}">Открыть</button><button class="b sec" data-sh="show:${z.id}">На карте</button><button class="b sec" data-sh="edit:${z.id}">📐 Контур</button><button class="b red" data-sh="del:${z.id}">Удалить</button></div>`).join('')}
-    ${shapeRecs().map(s => `<div class="card"><div class="t">${(SHAPE_TYPES[s.type] || SHAPE_TYPES['Другое']).e} ${esc(s.name || s.type)}</div><div class="s">${esc(s.type)} · ${Math.round(areaM2(s.pts))} м²</div>
-      <button class="b sec" data-sh="show:${s.id}">На карте</button><button class="b sec" data-sh="ren:${s.id}">Переименовать</button><button class="b sec" data-sh="edit:${s.id}">📐 Контур</button><button class="b red" data-sh="del:${s.id}">Удалить</button></div>`).join('')}
     <h3>Слой карты</h3>
     <label>Максимальная детализация снимка (если при приближении видите «Map data not yet available» — уменьшите)</label>
     <select id="s-z"><option>15</option><option>16</option><option>17</option><option>18</option><option>19</option></select>
