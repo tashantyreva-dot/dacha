@@ -57,3 +57,5 @@ h3{margin:14px 0 6px}
 .focusbar{bottom:74px;align-items:center;background:#fffe;border-radius:12px;padding:6px 10px;left:8px;right:8px;flex-wrap:wrap}
 .focusbar #f-name{font-weight:600;flex:1;min-width:100px}
 ::placeholder{color:#b0b0b0;opacity:1}
+.pgroup{margin-bottom:14px}
+.pin-list{margin-left:14px;padding-left:8px;border-left:3px solid #f9a825}
