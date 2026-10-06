@@ -117,7 +117,7 @@ async function initMap() {
   layers.osm = L.tileLayer(OSM, { maxNativeZoom: 19, maxZoom: 24, attribution: '© OpenStreetMap' });
   gridOn = (await DB.getMeta('grid')) !== false;
   satOp = (await DB.getMeta('satOp')) || 1; layers.sat.setOpacity(satOp);
-  snapOn = (await DB.getMeta('snap')) !== false;
+  snapOn = (await DB.getMeta('snap2')) === true;   // по умолчанию метка ставится точно туда, куда нажали
   // перенос границ участка из старой версии в общие данные (чтобы они попадали в облако)
   const old = await DB.getMeta('plot');
   if (old && !plantings.some(p => p.kind === 'plot')) { const rec = { id: 'plot', kind: 'plot', pts: old, updatedAt: Date.now() }; plantings.push(rec); await DB.put(rec); }
@@ -195,8 +195,9 @@ function drawGrid() {
 // привязка новой метки к центру клетки сетки (когда сетка видна и точка внутри участка)
 function snap(ll) {
   const z = map.getZoom();
+  if (!snapOn) return ll;
   if (focusZone) {   // внутри зоны: к центру клетки (1 м, а при сильном приближении 10 см) или свободно
-    if (!snapOn || z < 19) return ll;
+    if (z < 19) return ll;
     const st = z >= 22 ? 0.1 : 1, f = frame(gridRec(focusZone).pts), p = f.to([ll.lat, ll.lng]);
     const [lat, lng] = f.from([(Math.floor(p[0] / st) + 0.5) * st, (Math.floor(p[1] / st) + 0.5) * st]);
     return { lat, lng };
@@ -452,7 +453,7 @@ function initTools() {
   };
   $('#t-steps').onclick = openSteps;
   $('#f-out').onclick = exitZone;
-  $('#f-snap').onclick = () => { snapOn = !snapOn; DB.setMeta('snap', snapOn); focusUi(); };
+  $('#f-snap').onclick = () => { snapOn = !snapOn; DB.setMeta('snap2', snapOn); focusUi(); };
   $('#t-fit').onclick = () => { if (focusZone) return map.fitBounds(L.polygon(focusZone.pts).getBounds().pad(0.1), { maxZoom: 21 }); if (plotLayer) map.fitBounds(plotLayer.getBounds().pad(0.1)); else goHome(); };
   $('#d-undo').onclick = () => { drawing.pop(); redrawDraft(); };
   $('#d-ok').onclick = finishDraw;
