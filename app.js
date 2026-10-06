@@ -685,8 +685,8 @@ async function renderSettings() {
       <button class="b sec" data-sh="show:${p.id}">На карте</button><button class="b sec" data-sh="ren:${p.id}">Название</button><button class="b sec" data-sh="edit:${p.id}">📐 Контур</button><button class="b red" data-sh="del:${p.id}">Удалить</button></div>`).join('') || '<div class="muted">Границы участка ещё не заданы (кнопка ▢ на карте или координаты ниже).</div>'}
     <label>Добавить участок по координатам (широта, долгота — по одной паре на строку, из НСПД)</label>
     <input id="pc-name" placeholder="Название или кадастровый номер">
-    <textarea id="pc-pts" placeholder="56.2712204, 42.0451489&#10;56.2708457, 42.0456484&#10;..."></textarea>
-    <button class="b" id="pc-add">+ Добавить участок</button>
+    <textarea id="pc-pts" placeholder="Пример (это подсказка, не данные):&#10;55.1234567, 37.1234567&#10;55.1236000, 37.1240000&#10;55.1230000, 37.1242000"></textarea>
+    <button class="b" id="pc-add">+ Добавить участок</button><button class="b sec" id="pc-clear">Очистить поля</button>
     <label style="display:inline-block" class="b sec">Загрузить контуры из файла (GeoJSON / KML)<input id="pc-file" type="file" accept=".geojson,.json,.kml,application/json,application/vnd.google-earth.kml+xml" hidden></label>
     ${zoneRecs().map(z => `<div class="card"><div class="t">🌿 ${esc(z.name)}</div><div class="s">Зона · ${Math.round(areaM2(z.pts))} м² · растений: ${inZone(z).length}</div>
       <button class="b sec" data-sh="card:${z.id}">Открыть</button><button class="b sec" data-sh="show:${z.id}">На карте</button><button class="b sec" data-sh="edit:${z.id}">📐 Контур</button><button class="b red" data-sh="del:${z.id}">Удалить</button></div>`).join('')}
@@ -704,6 +704,7 @@ async function renderSettings() {
     if (!pts) return alert('Не получилось разобрать координаты. Нужно минимум 3 пары чисел: широта, долгота, по одной паре на строку.');
     switchView('map'); await addPlot($('#pc-name').value.trim(), pts, uid());
   };
+  $('#pc-clear').onclick = () => { $('#pc-name').value = ''; $('#pc-pts').value = ''; };
   $('#pc-file').onchange = async e => {
     const f = e.target.files[0]; if (!f) return;
     const list = parseShapesFile(await f.text(), f.name);
