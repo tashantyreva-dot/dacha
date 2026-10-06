@@ -668,11 +668,16 @@ function renderTodo() {
   const t = today(), list = [];
   live().forEach(p => {
     const info = cropInfo(p.crop); p.done = p.done || [];
+    if (p.removedAt && p.removedAt <= t) return;   // убрано или выкорчевано — напоминаний нет
     info.tasks.forEach(([d, text], i) => {
-      const due = addDays(p.plantedAt, d), key = i + ':' + text;
-      if (p.done.includes(key)) return;
-      const diff = daysBetween(t, due);
-      if (diff <= 3 && diff >= -30) list.push({ p, due, diff, text, key });
+      // у многолетних годовые дела (от 365 дней) повторяются каждый год; k — номер года
+      const years = isPer(p) && d >= 365 ? 60 : 1;
+      for (let k = 0; k < years; k++) {
+        const due = addDays(p.plantedAt, d + 365 * k), key = i + ':' + text + (k ? ':' + k : '');
+        if (p.done.includes(key)) continue;
+        const diff = daysBetween(t, due);
+        if (diff <= 3 && diff >= -30) list.push({ p, due, diff, text, key });
+      }
     });
     if (info.harvest) {
       const a = addDays(p.plantedAt, info.harvest[0]), b = addDays(p.plantedAt, info.harvest[1]);
