@@ -54,3 +54,5 @@ h3{margin:14px 0 6px}
 .sw.on{box-shadow:0 0 0 3px #222}
 .vtx{width:26px;height:26px;border-radius:50%;background:#fff;border:3px solid #e53935;box-shadow:0 0 4px #000a;box-sizing:border-box}
 .vtx.mid{width:16px;height:16px;margin:5px;background:#fff9;border:2px solid #e53935}
+.focusbar{bottom:74px;align-items:center;background:#fffe;border-radius:12px;padding:6px 10px;left:8px;right:8px;flex-wrap:wrap}
+.focusbar #f-name{font-weight:600;flex:1;min-width:100px}
