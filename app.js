@@ -653,12 +653,41 @@ function renderList() {
   $('#v-list').innerHTML = `
     <div class="card"><div class="t">Урожай ${year}</div>${sumHtml || '<div class="s">Пока ничего не собрано</div>'}</div>
     <input id="q" placeholder="Поиск по культуре, сорту, заметке" style="margin-bottom:10px">
-    <div id="items"></div>`;
+    <div id="items" class="tree"></div>`;
   const draw = () => {
-    const q = $('#q').value.toLowerCase();
-    $('#items').innerHTML = items.filter(p => (p.crop + p.variety + p.note).toLowerCase().includes(q)).map(p => `
-      <div class="card" data-id="${p.id}"><div class="t">${cropEmoji(p.crop)} ${esc(p.crop)}${p.variety ? ' · ' + esc(p.variety) : ''}</div>
-      <div class="s">${isPer(p) ? '🌳 многолетнее · ' : ''}Посажено ${fmt(p.plantedAt)}${p.removedAt ? ' · убрано ' + fmt(p.removedAt) : ''}${p.lat == null ? ' · без места на карте' : (zoneAt(p.lat, p.lng) ? ' · ' + esc(zoneAt(p.lat, p.lng).name) : '')}</div></div>`).join('') || '<div class="muted">Посадок за этот год нет. Нажмите на карту, чтобы добавить.</div>';
+    const q = $('#q').value.toLowerCase(), filtering = !!q;
+    const shown = items.filter(p => (p.crop + p.variety + p.note).toLowerCase().includes(q));
+    if (!shown.length && !filtering && !items.length) { $('#items').innerHTML = '<div class="muted">Посадок за этот год нет. Нажмите на карту, чтобы добавить.</div>'; return; }
+    if (!shown.length) { $('#items').innerHTML = '<div class="muted">Ничего не найдено.</div>'; return; }
+    // дерево: участок → зона → растение; если зона не размечена — участок → растение
+    const zoneOf = p => p.lat == null ? null : (zoneAt(p.lat, p.lng) || null);
+    const plotOf = p => { if (p.lat == null) return null; const z = zoneOf(p); return (z && ownerOf(z)) || plotAt(p.lat, p.lng) || null; };
+    const card = p => `<div class="card" data-id="${p.id}"><div class="t">${cropEmoji(p.crop)} ${esc(p.crop)}${p.variety ? ' · ' + esc(p.variety) : ''}</div>
+      <div class="s">${isPer(p) ? '🌳 многолетнее · ' : ''}Посажено ${fmt(p.plantedAt)}${p.removedAt ? ' · убрано ' + fmt(p.removedAt) : ''}</div></div>`;
+    const grp = (head, color, body, n) => `<details open><summary style="border-left:5px solid ${color}">${head} · ${n}</summary><div class="pin-list" style="border-left-color:${color}">${body}</div></details>`;
+    const block = (ps, zl, color) => {   // зоны с растениями, затем растения без зоны
+      let h = '';
+      zl.forEach(z => {
+        const zp = ps.filter(p => zoneOf(p) === z);
+        if (zp.length || !filtering) h += grp('🌿 ' + esc(z.name), z.color, zp.map(card).join('') || '<div class="muted">Пока пусто</div>', zp.length);
+      });
+      const rest = ps.filter(p => !zoneOf(p));
+      if (rest.length) h += (zl.length ? '<div class="muted tgap">Вне зон</div>' : '') + rest.map(card).join('');
+      return h;
+    };
+    const plots = plotRecs(), zs = zoneRecs();
+    let html = '';
+    plots.forEach(pl => {
+      const ps = shown.filter(p => plotOf(p) === pl);
+      if (!ps.length && filtering) return;
+      html += grp('🟨 ' + esc(plotName(pl)), '#f9a825', block(ps, zs.filter(z => ownerOf(z) === pl), '#f9a825') || '<div class="muted">Пока пусто</div>', ps.length);
+    });
+    const outPs = shown.filter(p => p.lat != null && !plotOf(p)), outZs = zs.filter(z => !ownerOf(z));
+    const outBody = block(outPs, outZs, '#9e9e9e');
+    if (outBody) html += plots.length ? grp('Вне участков', '#9e9e9e', outBody, outPs.length) : outBody;
+    const noPlace = shown.filter(p => p.lat == null);
+    if (noPlace.length) html += grp('Без места на карте', '#bdbdbd', noPlace.map(card).join(''), noPlace.length);
+    $('#items').innerHTML = html;
     $('#items').querySelectorAll('.card').forEach(c => c.onclick = () => openCard(c.dataset.id));
   };
   $('#q').oninput = draw; draw();
