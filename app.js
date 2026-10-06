@@ -60,7 +60,7 @@ const DB = {
   tx(store, mode, fn) {
     return new Promise((res, rej) => {
       const t = this.db.transaction(store, mode); const s = t.objectStore(store);
-      const rq = fn(s); t.oncomplete = () => res(rq && rq.result); t.onerror = () => rej(t.error);
+      const rq = fn(s); t.oncomplete = () => res(rq && rq.result); t.onerror = () => rej(t.error); t.onabort = () => rej(t.error || new Error('Запись отменена'));
     });
   },
   all() { return this.tx('plantings', 'readonly', s => s.getAll()); },
@@ -80,9 +80,13 @@ const inYear = () => live().filter(p => cropInfo(p.crop).obj || yOf(p.plantedAt)
 
 async function save(p) {
   p.updatedAt = Date.now();
+  try { await DB.put(p); }   // сначала в память телефона: если не вышло — не делаем вид, что сохранено
+  catch (e) {
+    alert('Не удалось сохранить: на телефоне не хватает места или браузер не даёт записать данные. Освободите место и нажмите «Сохранить» ещё раз. Пока не получилось, это изменение пропадёт при закрытии приложения.');
+    throw e;
+  }
   const i = plantings.findIndex(x => x.id === p.id);
   if (i >= 0) plantings[i] = p; else plantings.push(p);
-  await DB.put(p);
   renderAll();
   Sync.schedule();
 }
@@ -132,7 +136,17 @@ async function initMap() {
   const old = await DB.getMeta('plot');
   if (old && !plantings.some(p => p.kind === 'plot')) { const rec = { id: 'plot', kind: 'plot', pts: old, updatedAt: Date.now() }; plantings.push(rec); await DB.put(rec); }
   setLayer((await DB.getMeta('layer')) || 'sat');
-  map.on('click', e => onMapTap(e.latlng));
+  // касание ждёт 0,3 с: если следом второе рядом — это приближение двойным касанием, а не новая точка или посадка
+  let pending = null;
+  map.on('click', e => {
+    if (pending) {
+      const near = pending.pt.distanceTo(e.containerPoint) < 30, prev = pending;
+      clearTimeout(prev.t); pending = null;
+      if (near) return;
+      onMapTap(prev.ll);   // далеко — это два разных нажатия
+    }
+    pending = { ll: e.latlng, pt: e.containerPoint, t: setTimeout(() => { const p = pending; pending = null; onMapTap(p.ll); }, 300) };
+  });
   map.on('zoomend', () => { drawGrid(); map.getContainer().classList.toggle('zlow', map.getZoom() < 17); });
   map.getContainer().classList.toggle('zlow', map.getZoom() < 17);
   initSearch(); initTools();
