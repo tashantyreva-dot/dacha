@@ -620,7 +620,7 @@ function openCard(id) {
     <div class="muted">Посажено ${fmt(p.plantedAt)} (${age >= 0 ? age + ' дн. назад' : 'через ' + (-age) + ' дн.'})${p.lat != null && zoneAt(p.lat, p.lng) ? ' · зона: ' + esc(zoneAt(p.lat, p.lng).name) : ''}</div>
     ${p.note ? `<p>${esc(p.note).replace(/\n/g, '<br>')}</p>` : ''}
     <div class="photos">${(p.photos || []).map((s, i) => `<img src="${s}" data-i="${i}">`).join('')}</div>
-    <label>Добавить фото</label><input id="c-photo" type="file" accept="image/*" capture="environment">
+    <label>Добавить фото (снимок или из галереи)</label><input id="c-photo" type="file" accept="image/*">
     <h3>Урожай${totalTxt ? ` — всего ${esc(totalTxt)}` : ''}</h3>
     ${(p.harvests || []).map((h, i) => `<div class="h"><span>${fmt(h.date)} — ${esc(h.amount)} ${esc(h.unit)}</span><button data-hd="${i}">🗑</button></div>`).join('') || '<div class="muted">Пока ничего не собрано</div>'}
     <div class="row" style="margin-top:8px"><input id="h-date" type="date" value="${today()}"><input id="h-amt" type="number" step="any" inputmode="decimal" placeholder="Сколько"><select id="h-unit"><option>кг</option><option>шт</option><option>вёдра</option><option>л</option></select></div>
@@ -650,7 +650,9 @@ function openCard(id) {
   sbody.querySelectorAll('.photos img').forEach(im => im.onclick = () => { if (confirm('Удалить это фото?')) { p.photos.splice(+im.dataset.i, 1); save(p).then(() => openCard(p.id)); } });
   $('#c-photo').onchange = async e => {
     const f = e.target.files[0]; if (!f) return;
-    p.photos = p.photos || []; p.photos.push(await shrink(f)); await save(p); openCard(p.id);
+    const d = await shrink(f);
+    if (!d) return alert('Не удалось прочитать это фото. Попробуйте другое или сделайте снимок камерой.');
+    p.photos = p.photos || []; p.photos.push(d); await save(p); openCard(p.id);
   };
 }
 function shrink(file, max = 900) {
@@ -661,6 +663,7 @@ function shrink(file, max = 900) {
       c.width = img.width * k; c.height = img.height * k; c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
       URL.revokeObjectURL(url); res(c.toDataURL('image/jpeg', 0.7));
     };
+    img.onerror = () => { URL.revokeObjectURL(url); res(null); };
     img.src = url;
   });
 }
