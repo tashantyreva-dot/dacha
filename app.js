@@ -42,6 +42,7 @@ const cropEmoji = n => (CROPS[n] ? CROPS[n].e : '🌱');
 const $ = (s, r = document) => r.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const today = () => new Date().toISOString().slice(0, 10);
+const okYear = d => { const y = +String(d).slice(0, 4); return y >= 1950 && y <= 2100; };
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
 const addDays = (d, n) => { const x = new Date(d + 'T12:00:00'); x.setDate(x.getDate() + n); return x.toISOString().slice(0, 10); };
 const fmt = d => d ? new Date(d + 'T12:00:00').toLocaleDateString('ru-RU', { day: 'numeric', month: 'short', year: 'numeric' }) : '';
@@ -267,7 +268,16 @@ function redrawDraft() {
   const what = drawKind === 'plot' ? 'участка' : drawKind === 'zone' ? 'зоны' : 'строения';
   hint(drawing.length < 3 ? 'Нажимайте на углы ' + what + ' по кругу (минимум 3 точки). Сейчас точек: ' + drawing.length : 'Точек: ' + drawing.length + '. Нажмите «Готово», когда обошли весь контур.');
 }
+function startMove(p) {
+  if (drawing) stopDraw(); if (editing) stopEdit();
+  movingId = p.id; $('#m-name').textContent = 'Выберите новое место для «' + p.crop + '»';
+  $('#movebar').style.display = 'flex'; $('#btn-gps').style.display = 'none'; hint('');
+}
+function stopMove() {
+  movingId = null; $('#movebar').style.display = 'none'; if (!focusZone) $('#btn-gps').style.display = '';
+}
 function startDraw(kind) {
+  if (movingId) stopMove();
   drawKind = kind; drawing = []; redrawDraft(); $('#drawbar').style.display = 'flex'; $('#btn-gps').style.display = 'none';
 }
 function stopDraw() {
@@ -363,6 +373,7 @@ function openZoneCard(z) {
 const vIcon = L.divIcon({ className: '', html: '<div class="vtx"></div>', iconSize: [26, 26], iconAnchor: [13, 13] });
 const mIcon = L.divIcon({ className: '', html: '<div class="vtx mid"></div>', iconSize: [18, 18], iconAnchor: [9, 9] });
 function startEdit(rec) {
+  if (movingId) stopMove();
   closeSheet(); switchView('map');
   editing = { rec, pts: rec.pts.map(p => [p[0], p[1]]) };
   $('#editbar').style.display = 'flex'; $('#btn-gps').style.display = 'none';
@@ -406,6 +417,7 @@ function focusUi() {
   $('#f-snap').textContent = snapOn ? '🧲 К центру клетки' : '✋ Где нажму';
 }
 function enterZone(z) {
+  if (movingId) stopMove();
   closeSheet(); switchView('map');
   if (editing) stopEdit();
   if (!focusZone) prevLayer = curLayer;
@@ -441,8 +453,9 @@ function initTools() {
   $('#v-map').insertAdjacentHTML('beforeend', `<div class="tools"><button id="t-layer" title="Слой карты">🛰️</button><button id="t-plot" title="Обвести границы участка">▢</button><button id="t-zone" title="Отметить зону (сад, виноградник, клумба…)">🌿</button><button id="t-bld" title="Обвести строение">🏠</button><button id="t-grid" title="Сетка 1×1 м">🔳</button><button id="t-op" title="Прозрачность спутника">🌓</button><button id="t-in" title="Войти в зону">🔎</button><button id="t-steps" title="Шаги: что делать дальше">🧭</button><button id="t-fit" title="К моему участку">🎯</button></div>
     <div id="drawbar" class="drawbar" style="display:none"><button class="b sec" id="d-undo">↩ Убрать точку</button><button class="b" id="d-ok">✓ Готово</button><button class="b red" id="d-no">✕</button></div>
     <div id="focusbar" class="drawbar focusbar" style="display:none"><span id="f-name"></span><button class="b sec" id="f-snap"></button><button class="b red" id="f-out">✕ Выйти</button></div>
-    <div id="editbar" class="drawbar" style="display:none"><button class="b" id="e-ok">✓ Сохранить контур</button><button class="b red" id="e-no">✕ Отмена</button></div>`);
-  L.DomEvent.disableClickPropagation($('.tools')); L.DomEvent.disableClickPropagation($('#drawbar')); L.DomEvent.disableClickPropagation($('#editbar')); L.DomEvent.disableClickPropagation($('#focusbar'));
+    <div id="editbar" class="drawbar" style="display:none"><button class="b" id="e-ok">✓ Сохранить контур</button><button class="b red" id="e-no">✕ Отмена</button></div>
+    <div id="movebar" class="drawbar focusbar" style="display:none"><span id="m-name"></span><button class="b red" id="m-no">✕ Отмена</button></div>`);
+  L.DomEvent.disableClickPropagation($('.tools')); L.DomEvent.disableClickPropagation($('#drawbar')); L.DomEvent.disableClickPropagation($('#editbar')); L.DomEvent.disableClickPropagation($('#focusbar')); L.DomEvent.disableClickPropagation($('#movebar')); $('#m-no').onclick = stopMove;
   const names = Object.keys(LAYER_NAMES);
   $('#t-layer').onclick = () => { const n = names[(names.indexOf(curLayer) + 1) % names.length]; setLayer(n); hint(LAYER_NAMES[n]); setTimeout(() => hint(''), 1800); };
   $('#t-plot').onclick = () => startDraw('plot');
@@ -524,7 +537,7 @@ function onMapTap(ll) {
   if (editing) return;
   if (drawing) { drawing.push([ll.lat, ll.lng]); redrawDraft(); return; }
   if (movingId) {
-    const p = plantings.find(x => x.id === movingId); movingId = null; hint('');
+    const p = plantings.find(x => x.id === movingId); stopMove();
     if (p) { p.lat = ll.lat; p.lng = ll.lng; save(p); }
     return;
   }
@@ -583,8 +596,12 @@ function openForm(p, ll) {
   $('#f-ok').onclick = async () => {
     const crop = $('#f-crop').value.trim();
     if (!crop) return alert('Укажите культуру');
-    p.crop = crop; p.variety = $('#f-var').value.trim(); p.plantedAt = $('#f-date').value || today(); p.note = $('#f-note').value;
-    p.perennial = $('#f-per').value === '1'; p.removedAt = $('#f-rm').value || '';
+    const pd = $('#f-date').value || today(), rm = $('#f-rm').value || '';
+    if (!okYear(pd)) return alert('Проверьте дату посадки: год должен быть между 1950 и 2100.');
+    if (rm && !okYear(rm)) return alert('Проверьте дату «Убрано»: год должен быть между 1950 и 2100.');
+    if (rm && rm < pd) return alert('Дата «Убрано» не может быть раньше даты посадки.');
+    p.crop = crop; p.variety = $('#f-var').value.trim(); p.plantedAt = pd; p.note = $('#f-note').value;
+    p.perennial = $('#f-per').value === '1'; p.removedAt = rm;
     await save(p); closeSheet();
     if (isNew) { year = new Date(p.plantedAt).getFullYear(); renderAll(); }
   };
@@ -618,11 +635,15 @@ function openCard(id) {
   $('#c-x').onclick = closeSheet;
   $('#c-edit').onclick = () => openForm(p);
   $('#c-show').onclick = () => { closeSheet(); switchView('map'); if (p.lat != null) map.setView([p.lat, p.lng], 20); };
-  $('#c-move').onclick = () => { closeSheet(); switchView('map'); movingId = p.id; hint('Нажмите на карте новое место для «' + p.crop + '»'); };
+  $('#c-move').onclick = () => { closeSheet(); switchView('map'); startMove(p); };
   $('#c-del').onclick = async () => { if (confirm('Удалить посадку «' + p.crop + '»?')) { p.deleted = true; await save(p); closeSheet(); } };
   $('#h-add').onclick = async () => {
     const a = $('#h-amt').value; if (!a) return alert('Укажите количество');
-    p.harvests = p.harvests || []; p.harvests.push({ date: $('#h-date').value || today(), amount: +a, unit: $('#h-unit').value });
+    if (!(+a > 0) || !isFinite(+a)) return alert('Количество должно быть больше нуля.');
+    const hd = $('#h-date').value || today();
+    if (!okYear(hd)) return alert('Проверьте дату сбора: год должен быть между 1950 и 2100.');
+    if (hd < p.plantedAt) return alert('Дата сбора не может быть раньше даты посадки (' + fmt(p.plantedAt) + ').');
+    p.harvests = p.harvests || []; p.harvests.push({ date: hd, amount: +a, unit: $('#h-unit').value });
     await save(p); openCard(p.id);
   };
   sbody.querySelectorAll('[data-hd]').forEach(b => b.onclick = async () => { p.harvests.splice(+b.dataset.hd, 1); await save(p); openCard(p.id); });
