@@ -11,7 +11,7 @@ main{flex:1;position:relative;min-height:0}
 #v-map{padding:0}
 #map{position:absolute;inset:0}
 .fab{position:absolute;left:50%;transform:translateX(-50%);bottom:16px;z-index:500;background:#2e7d32;color:#fff;border:0;border-radius:28px;padding:14px 22px;font-size:16px;box-shadow:0 2px 8px #0006}
-.hint{position:absolute;top:58px;left:8px;right:8px;z-index:500;background:#fffe;border-radius:8px;padding:8px 10px;font-size:14px;display:none}
+.hint{position:absolute;top:58px;left:8px;right:60px;z-index:500;background:#fffe;border-radius:8px;padding:8px 10px;font-size:14px;display:none}
 nav{display:flex;background:#fff;border-top:1px solid #ddd;padding-bottom:env(safe-area-inset-bottom)}
 nav button{flex:1;border:0;background:none;padding:6px 0;font-size:22px;display:flex;flex-direction:column;align-items:center;color:#666}
 nav button span{font-size:11px}

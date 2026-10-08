@@ -41,12 +41,29 @@ const cropEmoji = n => (CROPS[n] ? CROPS[n].e : '🌱');
 /* ---------- Утилиты ---------- */
 const $ = (s, r = document) => r.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-const today = () => new Date().toISOString().slice(0, 10);
+const ymd = d => d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');   // дата по часам телефона, а не по UTC
+const today = () => ymd(new Date());
 const okYear = d => { const y = +String(d).slice(0, 4); return y >= 1950 && y <= 2100; };
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
-const addDays = (d, n) => { const x = new Date(d + 'T12:00:00'); x.setDate(x.getDate() + n); return x.toISOString().slice(0, 10); };
+const addDays = (d, n) => { const x = new Date(d + 'T12:00:00'); x.setDate(x.getDate() + n); return ymd(x); };
 const fmt = d => d ? new Date(d + 'T12:00:00').toLocaleDateString('ru-RU', { day: 'numeric', month: 'short', year: 'numeric' }) : '';
 const daysBetween = (a, b) => Math.round((new Date(b + 'T12:00:00') - new Date(a + 'T12:00:00')) / 864e5);
+
+/* ---------- Проверка записей (из файла-копии и из облака) ---------- */
+const isDate = d => typeof d === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(d) && okYear(d) && !isNaN(new Date(d + 'T12:00:00'));
+const isNum = (x, m) => typeof x === 'number' && isFinite(x) && Math.abs(x) <= m;
+function validRec(p) {
+  if (!p || typeof p !== 'object' || typeof p.id !== 'string' || !p.id) return false;
+  if (p.kind) return p.deleted === true || (Array.isArray(p.pts) && p.pts.length >= 3 && p.pts.every(q => Array.isArray(q) && isNum(q[0], 90) && isNum(q[1], 180)));
+  if (p.deleted === true) return true;
+  if (typeof p.crop !== 'string' || !isDate(p.plantedAt)) return false;
+  if (p.removedAt && !isDate(p.removedAt)) return false;
+  if (p.lat != null && !(isNum(p.lat, 90) && isNum(p.lng, 180))) return false;
+  if (p.harvests != null && !(Array.isArray(p.harvests) && p.harvests.every(h => h && isDate(h.date) && isNum(h.amount, 1e9)))) return false;
+  if (p.photos != null && !(Array.isArray(p.photos) && p.photos.every(s => typeof s === 'string' && s.startsWith('data:image/')))) return false;
+  if (p.done != null && !Array.isArray(p.done)) return false;
+  return true;
+}
 
 /* ---------- Хранилище (IndexedDB) ---------- */
 const DB = {
@@ -277,6 +294,7 @@ function stopMove() {
   movingId = null; $('#movebar').style.display = 'none'; if (!focusZone) $('#btn-gps').style.display = '';
 }
 function startDraw(kind) {
+  if (editing) { hint('Сначала нажмите «Сохранить контур» или «Отмена», потом можно обводить новое.'); setTimeout(() => { if (editing) editInfo(); }, 3000); return; }
   if (movingId) stopMove();
   drawKind = kind; drawing = []; redrawDraft(); $('#drawbar').style.display = 'flex'; $('#btn-gps').style.display = 'none';
 }
@@ -619,7 +637,7 @@ function openCard(id) {
     <div class="h"><h3 style="margin:0">${cropEmoji(p.crop)} ${esc(p.crop)}${p.variety ? ' · ' + esc(p.variety) : ''}</h3><button id="c-x">✕</button></div>
     <div class="muted">Посажено ${fmt(p.plantedAt)} (${age >= 0 ? age + ' дн. назад' : 'через ' + (-age) + ' дн.'})${p.lat != null && zoneAt(p.lat, p.lng) ? ' · зона: ' + esc(zoneAt(p.lat, p.lng).name) : ''}</div>
     ${p.note ? `<p>${esc(p.note).replace(/\n/g, '<br>')}</p>` : ''}
-    <div class="photos">${(p.photos || []).map((s, i) => `<img src="${s}" data-i="${i}">`).join('')}</div>
+    <div class="photos">${(p.photos || []).map((s, i) => `<img src="${esc(s)}" data-i="${i}">`).join('')}</div>
     <label>Добавить фото (снимок или из галереи)</label><input id="c-photo" type="file" accept="image/*">
     <h3>Урожай${totalTxt ? ` — всего ${esc(totalTxt)}` : ''}</h3>
     ${(p.harvests || []).map((h, i) => `<div class="h"><span>${fmt(h.date)} — ${esc(h.amount)} ${esc(h.unit)}</span><button data-hd="${i}">🗑</button></div>`).join('') || '<div class="muted">Пока ничего не собрано</div>'}
@@ -840,8 +858,15 @@ async function renderSettings() {
     const f = e.target.files[0]; if (!f) return;
     try {
       const arr = JSON.parse(await f.text());
-      for (const p of arr) { const cur = plantings.find(x => x.id === p.id); if (!cur || (cur.updatedAt || 0) < (p.updatedAt || 0)) { if (cur) plantings[plantings.indexOf(cur)] = p; else plantings.push(p); await DB.put(p); } }
-      renderAll(); alert('Готово: загружено ' + arr.length);
+      if (!Array.isArray(arr)) throw new Error('не список');
+      let ok = 0, bad = 0;
+      for (const p of arr) {
+        if (!validRec(p)) { bad++; continue; }   // негодную запись пропускаем, в память телефона не пишем
+        const cur = plantings.find(x => x.id === p.id);
+        if (!cur || (cur.updatedAt || 0) < (p.updatedAt || 0)) { await DB.put(p); if (cur) plantings[plantings.indexOf(cur)] = p; else plantings.push(p); }
+        ok++;
+      }
+      renderAll(); alert('Готово: загружено ' + ok + (bad ? '. Пропущено повреждённых записей: ' + bad : ''));
     } catch (_) { alert('Не удалось прочитать файл'); }
   };
 }
@@ -894,6 +919,7 @@ const Sync = {
       const remote = new Map(data.map(r => [r.id, r]));
       const push = [];
       for (const r of data) {
+        if (!validRec(r.data)) continue;
         const cur = plantings.find(x => x.id === r.id);
         if (!cur) { plantings.push(r.data); await DB.put(r.data); }
         else if ((cur.updatedAt || 0) < r.updated_at) { plantings[plantings.indexOf(cur)] = r.data; await DB.put(r.data); }
