@@ -67,6 +67,4 @@ h3{margin:14px 0 6px}
 .tree summary::before{content:'▾ '}
 .tree details:not([open])>summary::before{content:'▸ '}
 .tree .tgap{margin:6px 0 4px}
-a.b{display:inline-block;text-decoration:none;background:#2e7d32;color:#fff;border-radius:8px;padding:11px 14px;font-size:15px;margin:6px 6px 0 0}
-a.b.sec{background:#e8ece4;color:#222}
 .attr{background:#fffd;border-radius:6px;padding:2px 6px;margin:0 6px 6px 0!important;font-size:11px;color:#333}
