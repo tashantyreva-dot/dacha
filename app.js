@@ -1,6 +1,7 @@
 'use strict';
 /* ---------- Справочник культур ---------- */
 const RASP = '<img class="ico" alt="" src="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 64 64%27%3E%3Cg fill=%27%23d81b4a%27 stroke=%27%238e0f33%27 stroke-width=%271.4%27%3E%3Ccircle cx=%2717%27 cy=%2724%27 r=%276.6%27/%3E%3Ccircle cx=%2727%27 cy=%2724%27 r=%276.6%27/%3E%3Ccircle cx=%2737%27 cy=%2724%27 r=%276.6%27/%3E%3Ccircle cx=%2747%27 cy=%2724%27 r=%276.6%27/%3E%3Ccircle cx=%2722%27 cy=%2733%27 r=%276.6%27/%3E%3Ccircle cx=%2732%27 cy=%2733%27 r=%276.6%27/%3E%3Ccircle cx=%2742%27 cy=%2733%27 r=%276.6%27/%3E%3Ccircle cx=%2727%27 cy=%2742%27 r=%276.6%27/%3E%3Ccircle cx=%2737%27 cy=%2742%27 r=%276.6%27/%3E%3Ccircle cx=%2732%27 cy=%2751%27 r=%276.6%27/%3E%3C/g%3E%3Cg fill=%27%23ff9db5%27%3E%3Ccircle cx=%2715%27 cy=%2721.8%27 r=%271.7%27/%3E%3Ccircle cx=%2725%27 cy=%2721.8%27 r=%271.7%27/%3E%3Ccircle cx=%2735%27 cy=%2721.8%27 r=%271.7%27/%3E%3Ccircle cx=%2745%27 cy=%2721.8%27 r=%271.7%27/%3E%3Ccircle cx=%2720%27 cy=%2730.8%27 r=%271.7%27/%3E%3Ccircle cx=%2730%27 cy=%2730.8%27 r=%271.7%27/%3E%3Ccircle cx=%2740%27 cy=%2730.8%27 r=%271.7%27/%3E%3Ccircle cx=%2725%27 cy=%2739.8%27 r=%271.7%27/%3E%3Ccircle cx=%2735%27 cy=%2739.8%27 r=%271.7%27/%3E%3Ccircle cx=%2730%27 cy=%2748.8%27 r=%271.7%27/%3E%3C/g%3E%3Cg fill=%27%232e7d32%27 stroke=%27%231b5e20%27 stroke-width=%271%27%3E%3Cpath d=%27M32 22C26 20 20 15 18 9C25 9 30 13 32 18C34 13 39 9 46 9C44 15 38 20 32 22Z%27/%3E%3Crect x=%2730.8%27 y=%277%27 width=%272.4%27 height=%279%27 rx=%271.2%27/%3E%3C/g%3E%3C/svg%3E">';   // значок малины (в эмодзи его нет)
+const PLUM = '<img class="ico" alt="" src="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 64 64%27%3E%3Cellipse cx=%2732%27 cy=%2738%27 rx=%2720%27 ry=%2719%27 fill=%27%236a1b9a%27 stroke=%27%2338006b%27 stroke-width=%271.6%27/%3E%3Cpath d=%27M32 20C28 30 28 46 32 57%27 fill=%27none%27 stroke=%27%2338006b%27 stroke-width=%271.4%27 opacity=%27.5%27/%3E%3Cellipse cx=%2724%27 cy=%2730%27 rx=%275%27 ry=%273.5%27 fill=%27%23ba68c8%27 opacity=%27.7%27/%3E%3Cpath d=%27M32 19C32 14 34 10 37 8%27 fill=%27none%27 stroke=%27%235d4037%27 stroke-width=%272.4%27 stroke-linecap=%27round%27/%3E%3Cpath d=%27M37 12C42 6 50 7 52 10C48 15 41 15 37 12Z%27 fill=%27%232e7d32%27 stroke=%27%231b5e20%27/%3E%3C/svg%3E">';   // значок сливы (в эмодзи его нет)
 // harvest: [от, до] дней после посадки; tasks: что и когда делать (дней после посадки)
 const CROPS = {
   'Томат': { e: '🍅', harvest: [70, 120], tips: 'Поливать под корень, редко, но обильно. Пасынковать и подвязывать. Подкормка при цветении фосфором и калием.', tasks: [[10, 'Подвязать к опоре'], [14, 'Подкормка (азот + фосфор)'], [30, 'Убрать пасынки, подкормка калием'], [50, 'Обработка от фитофторы']] },
@@ -26,6 +27,7 @@ const CROPS = {
   'Виноград': { e: '🍇', per: 1, harvest: [1095, 1500], tips: 'Обрезка осенью или ранней весной, укрытие на зиму в холодных районах. Подвязка лозы, подкормка весной.', tasks: [[30, 'Полив, мульча'], [365, 'Весенняя обрезка и подкормка']] },
   'Груша': { e: '🍐', per: 1, harvest: [1460, 2200], tips: 'Обрезка ранней весной, побелка осенью.', tasks: [[365, 'Весенняя обрезка и подкормка']] },
   'Вишня': { e: '🍒', per: 1, harvest: [1095, 1800], tips: 'Обрезка ранней весной, побелка осенью.', tasks: [[365, 'Весенняя обрезка и подкормка']] },
+  'Слива': { e: PLUM, per: 1, harvest: [1095, 1800], tips: 'Обрезка ранней весной, побелка штамба осенью. Не любит застоя воды; многим сортам нужны опылители рядом.', tasks: [[365, 'Весенняя обрезка и подкормка']] },
   'Цветы': { e: '🌷', harvest: [30, 90], tips: 'Поливать по погоде, подкармливать при бутонизации.', tasks: [[14, 'Подкормка']] },
   'Теплица': { e: '🏕️', obj: true, harvest: null, tips: '', tasks: [] },
   'Дом': { e: '🏠', obj: true, harvest: null, tips: '', tasks: [] },
@@ -91,7 +93,7 @@ const DB = {
 /* ---------- Состояние ---------- */
 let plantings = [];      // включая «удалённые» (tombstone) для синхронизации
 let year = new Date().getFullYear();
-let map, markers = {}, movingId = null;
+let map, markers = {}, movingId = null, copyOf = null, copied = 0;
 let focusZone = null, prevLayer = null, satOp = 1, snapOn = true;   // режим «внутри зоны»
 const live = () => plantings.filter(p => !p.deleted && !p.kind);   // записи с kind (граница, строения) — не посадки
 const yOf = d => new Date(d).getFullYear();
@@ -282,16 +284,27 @@ function redrawDraft() {
   hint(drawing.length < 3 ? 'Нажимайте на углы ' + what + ' по кругу (минимум 3 точки). Сейчас точек: ' + drawing.length : 'Точек: ' + drawing.length + '. Нажмите «Готово», когда обошли весь контур.');
 }
 function startMove(p) {
-  if (drawing) stopDraw(); if (editing) stopEdit();
-  movingId = p.id; $('#m-name').textContent = 'Выберите новое место для «' + p.crop + '»';
+  if (drawing) stopDraw(); if (editing) stopEdit(); if (copyOf) stopMove();
+  movingId = p.id; $('#m-name').textContent = 'Выберите новое место для «' + p.crop + '»'; $('#m-no').textContent = '✕ Отмена'; $('#m-no').className = 'b red';
   $('#movebar').style.display = 'flex'; $('#btn-gps').style.display = 'none'; hint('');
 }
+// копирование: сколько угодно раз нажимаете на карту — в каждом месте появляется такая же посадка
+function startCopy(p) {
+  if (drawing) stopDraw(); if (editing) stopEdit(); if (movingId || copyOf) stopMove();
+  copyOf = p.id; copied = 0; copyUi();
+  $('#movebar').style.display = 'flex'; $('#btn-gps').style.display = 'none'; hint('');
+}
+function copyUi() {
+  const p = plantings.find(x => x.id === copyOf);
+  $('#m-name').textContent = 'Копия «' + (p ? p.crop : '') + '»: нажимайте места на карте. Добавлено: ' + copied;
+  $('#m-no').textContent = '✓ Готово'; $('#m-no').className = 'b';
+}
 function stopMove() {
-  movingId = null; $('#movebar').style.display = 'none'; if (!focusZone) $('#btn-gps').style.display = '';
+  movingId = null; copyOf = null; $('#movebar').style.display = 'none'; if (!focusZone) $('#btn-gps').style.display = '';
 }
 function startDraw(kind) {
   if (editing) { hint('Сначала нажмите «Сохранить контур» или «Отмена», потом можно обводить новое.'); setTimeout(() => { if (editing) editInfo(); }, 3000); return; }
-  if (movingId) stopMove();
+  if (movingId || copyOf) stopMove();
   drawKind = kind; drawing = []; redrawDraft(); $('#drawbar').style.display = 'flex'; $('#btn-gps').style.display = 'none';
 }
 function stopDraw() {
@@ -387,7 +400,7 @@ function openZoneCard(z) {
 const vIcon = L.divIcon({ className: '', html: '<div class="vtx"></div>', iconSize: [26, 26], iconAnchor: [13, 13] });
 const mIcon = L.divIcon({ className: '', html: '<div class="vtx mid"></div>', iconSize: [18, 18], iconAnchor: [9, 9] });
 function startEdit(rec) {
-  if (movingId) stopMove();
+  if (movingId || copyOf) stopMove();
   closeSheet(); switchView('map');
   editing = { rec, pts: rec.pts.map(p => [p[0], p[1]]) };
   $('#editbar').style.display = 'flex'; $('#btn-gps').style.display = 'none';
@@ -431,7 +444,7 @@ function focusUi() {
   $('#f-snap').textContent = snapOn ? '🧲 К центру клетки' : '✋ Где нажму';
 }
 function enterZone(z) {
-  if (movingId) stopMove();
+  if (movingId || copyOf) stopMove();
   closeSheet(); switchView('map');
   if (editing) stopEdit();
   if (!focusZone) prevLayer = curLayer;
@@ -550,6 +563,15 @@ function locate(center) {
 function onMapTap(ll) {
   if (editing) return;
   if (drawing) { drawing.push([ll.lat, ll.lng]); redrawDraft(); return; }
+  if (copyOf) {
+    const src = plantings.find(x => x.id === copyOf);
+    if (!src) { stopMove(); return; }
+    if (focusZone && !inPoly([ll.lat, ll.lng], focusZone.pts)) { hint('Это вне зоны «' + focusZone.name + '». Нажмите внутри зоны.'); setTimeout(() => hint(''), 2500); return; }
+    const at = snap(ll), c = { id: uid(), crop: src.crop, variety: src.variety, plantedAt: src.plantedAt, note: src.note, photos: [], harvests: [], done: [], removedAt: src.removedAt || '', lat: at.lat, lng: at.lng };
+    if (src.perennial != null) c.perennial = src.perennial;
+    copied++; copyUi(); save(c);
+    return;
+  }
   if (movingId) {
     const p = plantings.find(x => x.id === movingId); stopMove();
     if (p) { p.lat = ll.lat; p.lng = ll.lng; save(p); }
@@ -643,6 +665,7 @@ function openCard(id) {
     <div style="margin-top:12px">
       <button class="b sec" id="c-edit">✏️ Изменить</button>
       <button class="b sec" id="c-move">📍 Переместить</button>
+      <button class="b sec" id="c-copy">📋 Копировать</button>
       <button class="b sec" id="c-show">🗺️ На карте</button>
       <button class="b red" id="c-del">Удалить</button>
     </div>`);
@@ -650,6 +673,7 @@ function openCard(id) {
   $('#c-edit').onclick = () => openForm(p);
   $('#c-show').onclick = () => { closeSheet(); switchView('map'); if (p.lat != null) map.setView([p.lat, p.lng], 20); };
   $('#c-move').onclick = () => { closeSheet(); switchView('map'); startMove(p); };
+  $('#c-copy').onclick = () => { closeSheet(); switchView('map'); startCopy(p); };
   $('#c-del').onclick = async () => { if (confirm('Удалить посадку «' + p.crop + '»?')) { p.deleted = true; await save(p); closeSheet(); } };
   $('#h-add').onclick = async () => {
     const a = $('#h-amt').value; if (!a) return alert('Укажите количество');
