@@ -138,6 +138,7 @@ async function initMap() {
   const c = home || { lat: 55.75, lng: 37.6, z: 10, fresh: true };
   map = L.map('map', { zoomControl: false, attributionControl: false, maxZoom: 24 }).setView([c.lat, c.lng], c.z);
   L.control.zoom({ position: 'topright' }).addTo(map);
+  map.createPane('labels').style.zIndex = 450;   // подписи участков, зон и строений — под значками растений, чтобы не закрывать их
   // подпись источника карты всегда на виду (требование условий OpenStreetMap), текст зависит от слоя
   const cr = L.control({ position: 'bottomright' });
   cr.onAdd = () => { const d = L.DomUtil.create('div', 'attr'); d.id = 'attr'; return d; };
@@ -259,20 +260,20 @@ function renderShapes() {
   const ed = id => editing && editing.rec.id === id;
   const pls = plotRecs().filter(p => !ed(p.id)).map(pr => {
     const l = L.polygon(pr.pts, { color: '#f9a825', weight: 3, dashArray: '8 6', fillColor: '#f9a825', fillOpacity: 0.07, interactive: false });
-    l.bindTooltip(esc(plotName(pr)) + ' ≈ ' + sotki(pr.pts).toFixed(1) + ' сот.', { permanent: true, direction: 'center', className: 'shape-label' });
+    l.bindTooltip(esc(plotName(pr)) + ' ≈ ' + sotki(pr.pts).toFixed(1) + ' сот.', { permanent: true, direction: 'center', className: 'shape-label', pane: 'labels' });
     return l;
   });
   if (pls.length) plotLayer = L.featureGroup(pls).addTo(map);
   zoneRecs().filter(z => !ed(z.id) && (!focusZone || z.id === focusZone.id)).forEach(z => {
     const l = L.polygon(z.pts, { color: z.color, weight: 2, dashArray: '2 5', fillColor: z.color, fillOpacity: focusZone ? 0.04 : 0.16, interactive: false }).addTo(map);
     const n = inZone(z).length;
-    l.bindTooltip('🌿 ' + esc(z.name) + (n ? ' · ' + n + ' раст.' : ''), { permanent: true, direction: 'center', className: 'shape-label' });
+    l.bindTooltip('🌿 ' + esc(z.name) + (n ? ' · ' + n + ' раст.' : ''), { permanent: true, direction: 'center', className: 'shape-label', pane: 'labels' });
     shapeLayers.push(l);
   });
   shapeRecs().filter(s => !ed(s.id)).forEach(s => {
     const t = SHAPE_TYPES[s.type] || SHAPE_TYPES['Другое'];
     const l = L.polygon(s.pts, { color: t.c, weight: 2, fillColor: t.c, fillOpacity: 0.35, interactive: false }).addTo(map);
-    l.bindTooltip(t.e + ' ' + (s.name || s.type) + ' · ' + Math.round(areaM2(s.pts)) + ' м²', { permanent: true, direction: 'center', className: 'shape-label' });
+    l.bindTooltip(t.e + ' ' + (s.name || s.type) + ' · ' + Math.round(areaM2(s.pts)) + ' м²', { permanent: true, direction: 'center', className: 'shape-label', pane: 'labels' });
     shapeLayers.push(l);
   });
   drawGrid();
