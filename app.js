@@ -136,15 +136,9 @@ async function initMap() {
   const c = home || { lat: 55.75, lng: 37.6, z: 10, fresh: true };
   map = L.map('map', { zoomControl: false, attributionControl: false, maxZoom: 24 }).setView([c.lat, c.lng], c.z);
   L.control.zoom({ position: 'topright' }).addTo(map);
-  // источники карты: по условиям лицензий они должны быть доступны, поэтому спрятаны за маленькую кнопку ⓘ
+  // подпись источника карты всегда на виду (требование условий OpenStreetMap), текст зависит от слоя
   const cr = L.control({ position: 'bottomright' });
-  cr.onAdd = () => {
-    const d = L.DomUtil.create('div'); d.style.cssText = 'display:flex;align-items:flex-end;gap:4px;margin:0 6px 6px 0';
-    d.innerHTML = '<span style="display:none;background:#fffe;border-radius:6px;padding:3px 6px;font-size:11px">Снимки: Esri · Схема: © OpenStreetMap · Leaflet</span><button title="Источники карты" style="width:22px;height:22px;border:0;border-radius:50%;background:#fff9;font-size:13px;line-height:22px;padding:0;color:#555">ⓘ</button>';
-    L.DomEvent.disableClickPropagation(d);
-    d.querySelector('button').onclick = () => { const t = d.querySelector('span'); t.style.display = t.style.display === 'none' ? '' : 'none'; };
-    return d;
-  };
+  cr.onAdd = () => { const d = L.DomUtil.create('div', 'attr'); d.id = 'attr'; return d; };
   cr.addTo(map);
   layers.sat = L.tileLayer(TILE, { maxNativeZoom: (await DB.getMeta('satZoom')) || 17, maxZoom: 24, attribution: 'Esri' });
   layers.osm = L.tileLayer(OSM, { maxNativeZoom: 19, maxZoom: 24, attribution: '© OpenStreetMap' });
@@ -173,6 +167,8 @@ async function initMap() {
 }
 function setLayer(name) {
   curLayer = name;
+  $('#attr').textContent = name === 'sat' ? 'Снимки: Esri · Leaflet' : name === 'osm' ? '© участники OpenStreetMap · Leaflet' : 'Leaflet';
+  $('#attr').style.display = '';
   ['sat', 'osm'].forEach(k => { if (k === name) layers[k].addTo(map); else layers[k].remove(); });
   $('#map').style.background = name === 'blank' ? '#eef3e6' : '';
   if (!focusZone) DB.setMeta('layer', name);
@@ -468,7 +464,7 @@ function openSteps() {
   $('#st-x').onclick = closeSheet;
 }
 function initTools() {
-  $('#v-map').insertAdjacentHTML('beforeend', `<div class="tools"><button id="t-layer" title="Слой карты">🛰️</button><button id="t-plot" title="Обвести границы участка">▢</button><button id="t-zone" title="Отметить зону (сад, виноградник, клумба…)">🌿</button><button id="t-bld" title="Обвести строение">🏠</button><button id="t-grid" title="Сетка 1×1 м">🔳</button><button id="t-op" title="Прозрачность спутника">🌓</button><button id="t-in" title="Войти в зону">🔎</button><button id="t-steps" title="Шаги: что делать дальше">🧭</button><button id="t-fit" title="К моему участку">🎯</button></div>
+  $('#v-map').insertAdjacentHTML('beforeend', `<div class="tools"><button id="t-layer" title="Слой карты">🛰️</button><button id="t-plot" title="Обвести границы участка">▢</button><button id="t-zone" title="Отметить зону (сад, виноградник, клумба…)">🌿</button><button id="t-bld" title="Обвести строение">🏠</button><button id="t-grid" title="Сетка 1×1 м">🔳</button><button id="t-op" title="Прозрачность спутника">🌓</button><button id="t-in" title="Войти в зону">🔎</button><button id="t-cmp" title="Сверить с Google и Яндекс картами">🔗</button><button id="t-steps" title="Шаги: что делать дальше">🧭</button><button id="t-fit" title="К моему участку">🎯</button></div>
     <div id="drawbar" class="drawbar" style="display:none"><button class="b sec" id="d-undo">↩ Убрать точку</button><button class="b" id="d-ok">✓ Готово</button><button class="b red" id="d-no">✕</button></div>
     <div id="focusbar" class="drawbar focusbar" style="display:none"><span id="f-name"></span><button class="b sec" id="f-snap"></button><button class="b red" id="f-out">✕ Выйти</button></div>
     <div id="editbar" class="drawbar" style="display:none"><button class="b" id="e-ok">✓ Сохранить контур</button><button class="b red" id="e-no">✕ Отмена</button></div>
@@ -495,6 +491,15 @@ function initTools() {
     if (!zs.length) { hint('Зон пока нет. Нажмите 🌿 и обведите первую зону.'); setTimeout(() => hint(''), 3000); return; }
     openSheet('<h3 style="margin-top:0">В какую зону войти?</h3>' + zs.map(x => `<div class="card" data-id="${x.id}"><div class="t">🌿 ${esc(x.name)}</div><div class="s">${Math.round(areaM2(x.pts))} м²</div></div>`).join(''));
     sbody.querySelectorAll('.card').forEach(c => c.onclick = () => enterZone(zs.find(x => x.id === c.dataset.id)));
+  };
+  $('#t-cmp').onclick = () => {
+    const c = map.getCenter(), z = Math.round(map.getZoom()), la = c.lat.toFixed(6), lo = c.lng.toFixed(6);
+    openSheet(`<h3 style="margin-top:0">Сверить с другими картами</h3>
+      <p class="muted">Откроется в новой вкладке то же место на спутниковом снимке. Вернуться сюда можно кнопкой «назад» или переключив вкладку.</p>
+      <a class="b" target="_blank" rel="noopener" href="https://www.google.com/maps/@${la},${lo},${Math.min(z, 21)}z/data=!3m1!1e3">Google Карты (спутник)</a>
+      <a class="b" target="_blank" rel="noopener" href="https://yandex.ru/maps/?ll=${lo}%2C${la}&z=${Math.min(z, 20)}&l=sat">Яндекс Карты (спутник)</a>
+      <button class="b sec" id="cmp-x">Закрыть</button>`);
+    $('#cmp-x').onclick = closeSheet;
   };
   $('#t-steps').onclick = openSteps;
   $('#f-out').onclick = exitZone;
@@ -877,14 +882,14 @@ const lat2y = (lat, z) => Math.floor((1 - Math.log(Math.tan(lat * Math.PI / 180)
 async function downloadTiles() {
   const st = $('#dl-st');
   if (!navigator.onLine) return st.textContent = 'Нет интернета: скачайте карту там, где он есть.';
-  const src = { sat: { url: TILE, max: layers.sat.options.maxNativeZoom }, osm: { url: OSM, max: 19 } }[curLayer];
+  if (curLayer === 'osm') return st.textContent = 'Схему OpenStreetMap нельзя скачивать впрок — это запрещено правилами сервиса. Переключите слой на спутник (кнопка 🛰️ на карте) и нажмите снова.';
+  const src = { sat: { url: TILE, max: layers.sat.options.maxNativeZoom } }[curLayer];
   if (!src) return st.textContent = 'Для «чистого плана» карту скачивать не нужно: он работает без интернета.';
   const b = map.getBounds().pad(0.15), urls = [];
   for (let z = 15; z <= src.max; z++) {
     const x0 = lon2x(b.getWest(), z), x1 = lon2x(b.getEast(), z), y0 = lat2y(b.getNorth(), z), y1 = lat2y(b.getSouth(), z);
     for (let x = x0; x <= x1; x++) for (let y = y0; y <= y1; y++) urls.push(src.url.replace('{z}', z).replace('{x}', x).replace('{y}', y));
   }
-  if (curLayer === 'osm' && urls.length > 400) return st.textContent = 'Для схемы OpenStreetMap можно сохранять только небольшую область (до 400 фрагментов, сейчас ' + urls.length + '). Приблизьте карту к участку.';
   if (urls.length > 2500) return st.textContent = 'Слишком большая область (' + urls.length + ' фрагментов). Приблизьте карту к участку.';
   if (!confirm(`Скачать ${urls.length} фрагментов карты (около ${Math.round(urls.length * 0.025)} МБ)?`)) return;
   const cache = await caches.open('tiles'); let n = 0, bad = 0;
