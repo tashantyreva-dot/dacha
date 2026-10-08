@@ -464,7 +464,7 @@ function openSteps() {
   $('#st-x').onclick = closeSheet;
 }
 function initTools() {
-  $('#v-map').insertAdjacentHTML('beforeend', `<div class="tools"><button id="t-layer" title="Слой карты">🛰️</button><button id="t-plot" title="Обвести границы участка">▢</button><button id="t-zone" title="Отметить зону (сад, виноградник, клумба…)">🌿</button><button id="t-bld" title="Обвести строение">🏠</button><button id="t-grid" title="Сетка 1×1 м">🔳</button><button id="t-op" title="Прозрачность спутника">🌓</button><button id="t-in" title="Войти в зону">🔎</button><button id="t-cmp" title="Сверить с Google и Яндекс картами">🔗</button><button id="t-steps" title="Шаги: что делать дальше">🧭</button><button id="t-fit" title="К моему участку">🎯</button></div>
+  $('#v-map').insertAdjacentHTML('beforeend', `<div class="tools"><button id="t-layer" title="Слой карты">🛰️</button><button id="t-plot" title="Обвести границы участка">▢</button><button id="t-zone" title="Отметить зону (сад, виноградник, клумба…)">🌿</button><button id="t-bld" title="Обвести строение">🏠</button><button id="t-grid" title="Сетка 1×1 м">🔳</button><button id="t-op" title="Прозрачность спутника">🌓</button><button id="t-in" title="Войти в зону">🔎</button><button id="t-steps" title="Шаги: что делать дальше">🧭</button><button id="t-fit" title="К моему участку">🎯</button></div>
     <div id="drawbar" class="drawbar" style="display:none"><button class="b sec" id="d-undo">↩ Убрать точку</button><button class="b" id="d-ok">✓ Готово</button><button class="b red" id="d-no">✕</button></div>
     <div id="focusbar" class="drawbar focusbar" style="display:none"><span id="f-name"></span><button class="b sec" id="f-snap"></button><button class="b red" id="f-out">✕ Выйти</button></div>
     <div id="editbar" class="drawbar" style="display:none"><button class="b" id="e-ok">✓ Сохранить контур</button><button class="b red" id="e-no">✕ Отмена</button></div>
@@ -491,15 +491,6 @@ function initTools() {
     if (!zs.length) { hint('Зон пока нет. Нажмите 🌿 и обведите первую зону.'); setTimeout(() => hint(''), 3000); return; }
     openSheet('<h3 style="margin-top:0">В какую зону войти?</h3>' + zs.map(x => `<div class="card" data-id="${x.id}"><div class="t">🌿 ${esc(x.name)}</div><div class="s">${Math.round(areaM2(x.pts))} м²</div></div>`).join(''));
     sbody.querySelectorAll('.card').forEach(c => c.onclick = () => enterZone(zs.find(x => x.id === c.dataset.id)));
-  };
-  $('#t-cmp').onclick = () => {
-    const c = map.getCenter(), z = Math.round(map.getZoom()), la = c.lat.toFixed(6), lo = c.lng.toFixed(6);
-    openSheet(`<h3 style="margin-top:0">Сверить с другими картами</h3>
-      <p class="muted">Откроется в новой вкладке то же место на спутниковом снимке. Вернуться сюда можно кнопкой «назад» или переключив вкладку.</p>
-      <a class="b" target="_blank" rel="noopener" href="https://www.google.com/maps/@${la},${lo},${Math.min(z, 21)}z/data=!3m1!1e3">Google Карты (спутник)</a>
-      <a class="b" target="_blank" rel="noopener" href="https://yandex.ru/maps/?ll=${lo}%2C${la}&z=${Math.min(z, 20)}&l=sat">Яндекс Карты (спутник)</a>
-      <button class="b sec" id="cmp-x">Закрыть</button>`);
-    $('#cmp-x').onclick = closeSheet;
   };
   $('#t-steps').onclick = openSteps;
   $('#f-out').onclick = exitZone;
